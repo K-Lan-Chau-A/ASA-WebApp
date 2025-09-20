@@ -26,3 +26,15 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: rgba(0,0,0,0.4);  /* đậm hơn khi hover */
 }
+
+/* Biến thể “siêu kín” – gần như tàng hình cho tới khi hover */
+.ghost-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.ghost-scrollbar::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+.ghost-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(107,114,128,.35); /* gray khi hover */
+}

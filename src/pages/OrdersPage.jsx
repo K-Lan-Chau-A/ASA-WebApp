@@ -783,7 +783,7 @@ submitOrder = async () => {
           {/* RIGHT */}
           <div className="w-1/2 flex flex-col">
             <div className="mb-2 rounded-t-2xl bg-[#07323b] px-3 sm:px-4 py-2 flex items-center justify-between ">
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pr-2">
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pr-2 custom-scrollbar">
                 {invoices.map((inv, i) => {
                   const active = i === activeIdx;
                   return (
@@ -862,7 +862,7 @@ submitOrder = async () => {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 ghost-scrollbar">
                 {orders.length === 0 ? (
                   <div className="text-center text-gray-500 py-16">Chưa có sản phẩm trong đơn hàng</div>
                 ) : (
