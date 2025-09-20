@@ -18,8 +18,9 @@ const PAY_TABS = [
   { id: "atm",  label: "4: ATM" },
 ];
 
+const METHOD_MAP = { cash: 1, qr: 2, nfc: 3, atm: 4 };
+
 class PaymentPageClass extends React.Component {
-  /* ===================== STATE ===================== */
   state = {
     orderId:     this.props.location?.state?.orderId || 0,
     payMethodId: this.props.location?.state?.paymentMethod ?? null,
@@ -44,34 +45,23 @@ class PaymentPageClass extends React.Component {
     toastMsg: "",
   };
 
-  /* ===================== FLAGS/HANDLERS ===================== */
-  _isPaid = false;        // đã thanh toán xong
-  _didSetStatus2 = false; // đã gọi PUT status=2 thành công
+  _isPaid = false;
+  _didSetStatus2 = false;
   visHandlerBound = null;
   popHandlerBound = null;
 
-  /* ===================== LIFECYCLE ===================== */
   componentDidMount() {
-    // lấy chi tiết nếu vào thẳng Payment
     if (!this.state.orders.length && this.state.orderId) {
       this.fetchOrderDetailsFor(this.state.orderId);
     }
     this.fetchLatestOrderId();
 
-    // nếu mở sẵn tab QR -> khởi chạy flow
-    if (this.props.defaultMethod === "qr") {
-      this.initQRFlow();
-    }
+    if (this.props.defaultMethod === "qr") this.initQRFlow();
 
-    // visibility
     this.visHandlerBound = this.handleVisibilityChange.bind(this);
     document.addEventListener("visibilitychange", this.visHandlerBound);
 
-    // back của trình duyệt trong SPA
-    this.popHandlerBound = () => {
-      // Đang ở SPA (không unload), có thể PUT bình thường
-      this.putStatus2().catch(() => {}).finally(() => {});
-    };
+    this.popHandlerBound = () => { this.putStatus2().catch(()=>{}); };
     window.addEventListener("popstate", this.popHandlerBound);
   }
 
@@ -80,8 +70,7 @@ class PaymentPageClass extends React.Component {
     document.removeEventListener("visibilitychange", this.visHandlerBound);
     window.removeEventListener("popstate", this.popHandlerBound);
 
-    // Dự phòng: rời route cũng thử set về 2 (không chờ)
-    this.putStatus2().catch(() => {});
+    this.putStatus2().catch(()=>{});
   }
 
   async componentDidUpdate(prevProps) {
@@ -95,7 +84,7 @@ class PaymentPageClass extends React.Component {
     }
   }
 
-  /* ===================== UTILS ===================== */
+  /* ---------- Utils ---------- */
   safeParse = async (res) => {
     try { return await res.json(); }
     catch {
@@ -107,16 +96,27 @@ class PaymentPageClass extends React.Component {
   subtotal = () =>
     (this.state.orders || []).reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
 
-  setActiveTab = (tab) => {
-    this.setState({ activeTab: tab });
-    this.props.navigate(`/payment?method=${tab}`, { replace: true, state: this.props.location?.state });
-    if (tab === "qr") this.initQRFlow(); else this.stopPolling();
+  // PM chuẩn về số (tránh 'BankTransfer' → 2)
+  normalizePaymentMethod = (raw) => {
+    if (raw == null) return null;
+    if (typeof raw === "number" && !Number.isNaN(raw)) return raw;
+    const map = {
+      Cash: 1, BankTransfer: 2, NFC: 3, ATM: 4,
+      cash: 1, qr: 2, nfc: 3, atm: 4,
+      "1": 1, "2": 2, "3": 3, "4": 4,
+    };
+    return map[raw] ?? (Number(raw) || null);
   };
 
-  handleQuick = (amount) => this.setState((s) => ({ received: s.received + amount }));
-  keyIn        = (n) => this.setState((s) => ({ received: Number(String(s.received) + String(n)) }));
-  keyClear     = () => this.setState({ received: 0 });
-  keyBackspace = () => this.setState((s) => ({ received: Number(String(s.received).slice(0, -1) || 0) }));
+  // đọc cache từ localStorage
+  getLastOrderCache() {
+    try {
+      const raw = JSON.parse(localStorage.getItem("lastOrderResponse") || "null");
+      if (!raw) return null;
+      // có thể API trả { success, data: {...} } hoặc đã được gộp sẵn
+      return raw.data ? raw.data : raw;
+    } catch { return null; }
+  }
 
   showToast = (msg, ms = 1600) => {
     this.setState({ toastMsg: msg });
@@ -162,7 +162,7 @@ class PaymentPageClass extends React.Component {
     return 0;
   }
 
-  /* ===================== ORDER ID & DETAILS ===================== */
+  /* ---------- Load order ---------- */
   async fetchLatestOrderId() {
     const { shopId, shiftId } = this.getAuthContext();
     if (!shopId || !shiftId) {
@@ -173,11 +173,14 @@ class PaymentPageClass extends React.Component {
     const token = localStorage.getItem("accessToken") || "";
     const url = `${API_URL}/api/orders?ShiftId=${shiftId}&ShopId=${shopId}&page=1&pageSize=10`;
     try {
+      const t0 = performance.now();
       const res = await fetch(url, {
         headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         mode: "cors",
         cache: "no-store",
       });
+      const dt = Math.round(performance.now() - t0);
+      log(`GET latest orderId → ${res.status} (${dt}ms)`, url);
       const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
@@ -192,31 +195,10 @@ class PaymentPageClass extends React.Component {
           }
         }
       );
-    } catch {
+    } catch (e) {
+      warn("fetchLatestOrderId failed:", e?.message || e);
       this.setState({ displayOrderId: this.state.orderId || null });
     }
-  }
-
-  mapOrderDetailsToCartLines(raw = []) {
-    return raw.map((d, i) => {
-      const qty  = Number(d.quantity ?? 0);
-      const pid  = Number(d.productId ?? 0);
-      const puid = Number(d.productUnitId ?? 0);
-      const unitPrice = Number(d.totalPrice ?? 0) / Math.max(1, qty || 1);
-      return {
-        id: pid,
-        productUnitId: puid,
-        qty,
-        price: unitPrice,
-        name: `Sản phẩm #${pid}`,
-        unit: "",
-        note: "",
-        unitOptions: [],
-        img: "https://via.placeholder.com/150",
-        __src: "order-details",
-        __idx: i,
-      };
-    });
   }
 
   async fetchOrderDetailsFor(orderId) {
@@ -224,120 +206,236 @@ class PaymentPageClass extends React.Component {
     const token = localStorage.getItem("accessToken") || "";
     const url   = `${API_URL}/api/order-details?OrderId=${orderId}&page=1&pageSize=5000`;
     try {
+      const t0 = performance.now();
       const res  = await fetch(url, {
         headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         mode: "cors",
         cache: "no-store",
       });
+      const dt = Math.round(performance.now() - t0);
+      log(`GET details(${orderId}) → ${res.status} (${dt}ms)`, url);
       const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
       const items = Array.isArray(data?.items) ? data.items : [];
-      const lines = this.mapOrderDetailsToCartLines(items);
+      const lines = items.map((d, i) => {
+        const qty  = Number(d.quantity ?? 0);
+        const pid  = Number(d.productId ?? 0);
+        const puid = Number(d.productUnitId ?? 0);
+        const unitPrice = Number(d.totalPrice ?? 0) / Math.max(1, qty || 1);
+        return {
+          id: pid, productUnitId: puid, qty, price: unitPrice,
+          name: `Sản phẩm #${pid}`, unit: "", note: "",
+          unitOptions: [], img: "https://via.placeholder.com/150",
+          __src: "order-details", __idx: i,
+        };
+      });
+
       this.setState((s) => (s.orders?.length ? null : { orders: lines }));
-    } catch {}
+    } catch (e) {
+      warn("fetchOrderDetailsFor failed:", e?.message || e);
+    }
   }
 
-  /* ===================== CANCEL → status:2 ===================== */
-  buildCancelPayload = () => {
-    // cố gắng lấy đầy đủ từ lastOrderResponse
-    const last = (() => {
-      try { return JSON.parse(localStorage.getItem("lastOrderResponse") || "null") || {}; }
-      catch { return {}; }
-    })();
+  /* ---------- Build payload (ưu tiên overrides → head → last → state) ---------- */
+  async fetchOrderHead(orderId) {
+    const { shopId, shiftId } = this.getAuthContext();
+    if (!orderId || !shopId || !shiftId) return null;
+
+    const token = localStorage.getItem("accessToken") || "";
+    const url   = `${API_URL}/api/orders?OrderId=${orderId}&ShiftId=${shiftId}&ShopId=${shopId}&page=1&pageSize=1&_=${Date.now()}`;
+    try {
+      const t0 = performance.now();
+      const res = await fetch(url, {
+        headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        mode: "cors",
+        cache: "no-store",
+      });
+      const dt = Math.round(performance.now() - t0);
+      log(`GET head(${orderId}) → ${res.status} (${dt}ms)`, url);
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      return Array.isArray(data?.items) ? data.items[0] : null;
+    } catch (e) {
+      warn("fetchOrderHead failed:", e?.message || e);
+      return null;
+    }
+  }
+
+  async buildFullPayload(orderId, overrides = {}) {
+    const head = (await this.fetchOrderHead(orderId)) || {};
+    const last = this.getLastOrderCache() || {};
+
+    // orderDetails: ưu tiên state → last → fetch
+    let details = (this.state.orders || []).map(it => ({
+      quantity: Number(it.qty || 0),
+      productUnitId: Number(it.productUnitId || 0),
+      productId: Number(it.id || 0),
+    }));
+    if (!details.length && Array.isArray(last.orderDetails) && last.orderDetails.length) {
+      details = last.orderDetails.map(d => ({
+        quantity: Number(d.quantity ?? d.qty ?? 0),
+        productUnitId: Number(d.productUnitId ?? 0),
+        productId: Number(d.productId ?? d.id ?? 0),
+      }));
+    }
+    if (!details.length) {
+      const token = localStorage.getItem("accessToken") || "";
+      const url   = `${API_URL}/api/order-details?OrderId=${orderId}&page=1&pageSize=5000`;
+      try {
+        const res  = await fetch(url, {
+          headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          mode: "cors",
+          cache: "no-store",
+        });
+        const data = await this.safeParse(res);
+        if (res.ok) {
+          const items = Array.isArray(data?.items) ? data.items : [];
+          details = items.map(d => ({
+            quantity: Number(d.quantity ?? 0),
+            productUnitId: Number(d.productUnitId ?? 0),
+            productId: Number(d.productId ?? 0),
+          }));
+        }
+      } catch {}
+    }
 
     const { shopId, shiftId } = this.getAuthContext();
 
-    const orderDetails =
-      Array.isArray(last.orderDetails) && last.orderDetails.length
-        ? last.orderDetails.map(d => ({
-            quantity: Number(d.quantity ?? d.qty ?? 0),
-            productUnitId: Number(d.productUnitId ?? 0),
-            productId: Number(d.productId ?? d.id ?? 0),
-          }))
-        : (this.state.orders || []).map(it => ({
-            quantity: Number(it.qty || 0),
-            productUnitId: Number(it.productUnitId || 0),
-            productId: Number(it.id || 0),
-          }));
+    const rawPm =
+      overrides.paymentMethod ??
+      head?.paymentMethod ??
+      last?.paymentMethod ??
+      this.state.payMethodId ??
+      METHOD_MAP[this.state.activeTab] ?? 1;
 
-    return {
-      customerId: last.customerId ?? this.state.customerId ?? null,
-      paymentMethod: last.paymentMethod ?? this.state.payMethodId ?? 1,
-      status: 2,
-      shiftId: shiftId ?? last.shiftId ?? null,
-      shopId: shopId ?? last.shopId ?? null,
-      voucherId: last.voucherId ?? null,
-      discount: last.discount ?? null,
-      note: this.state.note ?? last.note ?? "",
-      orderDetails,
+    const paymentMethod = this.normalizePaymentMethod(rawPm);
+
+    const payload = {
+      customerId: overrides.customerId ?? head?.customerId ?? last?.customerId ?? this.state.customerId ?? null,
+      paymentMethod,
+      // MẶC ĐỊNH 0 – chỉ khi back mới ép 2; khi cash submit mới set 1
+      status: overrides.status ?? head?.status ?? last?.status ?? 0,
+      shiftId: overrides.shiftId ?? (shiftId ?? head?.shiftId ?? last?.shiftId ?? null),
+      shopId: overrides.shopId ?? (shopId ?? head?.shopId ?? last?.shopId ?? null),
+      voucherId: overrides.voucherId ?? head?.voucherId ?? last?.voucherId ?? null,
+      discount: overrides.discount ?? head?.discount ?? last?.discount ?? null,
+      note: overrides.note ?? this.state.note ?? head?.note ?? last?.note ?? "",
+      orderDetails: details,
     };
-  };
-
-  putStatus2 = async () => {
-    const orderId = Number(this.state.orderId || this.state.displayOrderId || 0);
-    if (!orderId || this._isPaid || this._didSetStatus2) return;
-
-    const token = localStorage.getItem("accessToken") || "";
-    const payload = this.buildCancelPayload();
-
-    try {
-      const res = await fetch(`${API_URL}/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json, text/plain, */*",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        mode: "cors",
-        cache: "no-store",
-        body: JSON.stringify(payload),
-      });
-      const data = await this.safeParse(res);
-      if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-      this._didSetStatus2 = true;
-      log("PUT status=2 OK for order", orderId);
-    } catch (e) {
-      err("PUT status=2 FAILED:", e?.message || e);
-    }
-  };
-
-  /* ===================== QR FLOW ===================== */
-  async ensurePaymentMethodForQR(orderId) {
-    try {
-      const token = localStorage.getItem("accessToken") || "";
-      const payload = { paymentMethod: 2 };
-      const res = await fetch(`${API_URL}/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          accept: "application/json, text/plain, */*",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        mode: "cors",
-        cache: "no-store",
-        body: JSON.stringify(payload),
-      });
-      const data = await this.safeParse(res);
-      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
-      log("PUT paymentMethod=2 OK for order", orderId);
-    } catch (e) {
-      err("ensurePaymentMethodForQR", e);
-      this.setState({ qrError: e.message || "Không đổi được phương thức thanh toán." });
-    }
+    log("buildFullPayload:", payload);
+    return payload;
   }
 
+  /* ---------- PUT paymentMethod ngay khi click (giữ status=0) ---------- */
+  ensurePaymentMethod = async (orderId, pm) => {
+    if (!orderId || !pm) return;
+    const token = localStorage.getItem("accessToken") || "";
+    try {
+      const payload = await this.buildFullPayload(orderId, { paymentMethod: pm, status: 0 });
+      const url = `${API_URL}/api/orders/${orderId}`;
+      const t0 = performance.now();
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json, text/plain, */*",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        mode: "cors", cache: "no-store",
+        body: JSON.stringify(payload),
+      });
+      const dt = Math.round(performance.now() - t0);
+      const data = await this.safeParse(res);
+      log(`PUT paymentMethod=${pm} → ${res.status} (${dt}ms)`, url, payload, data);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      this.setState({ payMethodId: pm });
+    } catch (e) {
+      err("ensurePaymentMethod failed:", e?.message || e);
+    }
+  };
+
+  /* ---------- Back / rời trang → status:2 ---------- */
+  putStatus2 = async (orderIdArg) => {
+  // —— 1) Lấy orderId chắc chắn
+  const oidFromState = Number(this.state.orderId || this.state.displayOrderId || 0);
+  let orderId = Number(orderIdArg || oidFromState || 0);
+  if (!orderId) {
+    log("PUT status=2: chưa có orderId → chờ waitForOrderId(5000)...");
+    orderId = await this.waitForOrderId(5000); // tăng timeout để chắc id có
+  }
+  if (!orderId) {
+    warn("PUT status=2: không có orderId, bỏ qua.");
+    return;
+  }
+
+  // —— 2) Không push status=2 nếu đã paid (status 1)
+  if (this._isPaid) {
+    log("PUT status=2: đơn đã thanh toán (_isPaid), bỏ qua.");
+    return;
+  }
+  if (this._didSetStatus2) {
+    log("PUT status=2: đã set trước đó (_didSetStatus2=true), bỏ qua.");
+    return;
+  }
+
+  const token = localStorage.getItem("accessToken") || "";
+
+  try {
+    // —— 3) Build payload đầy đủ, ÉP status=2 và paymentMethod là số
+    const payload = await this.buildFullPayload(orderId, { status: 2 });
+    payload.paymentMethod = this.normalizePaymentMethod(
+      payload.paymentMethod ?? METHOD_MAP[this.state.activeTab] ?? 1
+    );
+
+    // log trước khi bắn
+    log("PUT status=2 – final payload:", { orderId, payload });
+
+    const url = `${API_URL}/api/orders/${orderId}`;
+    const t0  = performance.now();
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "application/json, text/plain, */*",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      mode: "cors",
+      cache: "no-store",
+      keepalive: true,               // QUAN TRỌNG khi điều hướng
+      body: JSON.stringify(payload),
+    });
+    const dt = Math.round(performance.now() - t0);
+    const data = await this.safeParse(res);
+    log(`PUT status=2 → ${res.status} (${dt}ms)`, url, data);
+
+    if (!res.ok) {
+      // In lỗi backend (validation) cho dễ soi
+      err("PUT status=2 FAILED payload:", payload);
+      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+    }
+
+    this._didSetStatus2 = true;
+  } catch (e) {
+    err("PUT status=2 FAILED:", e?.message || e);
+  }
+};
+
+
+  /* ---------- QR flow ---------- */
   async fetchVietQR(orderId) {
     if (!orderId) return;
     const token = localStorage.getItem("accessToken") || "";
     const url = `${API_URL}/api/sepay/vietqr?orderId=${orderId}`;
     try {
       this.setState({ qrLoading: true, qrError: "" });
+      const t0 = performance.now();
       const res = await fetch(url, {
         headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        mode: "cors",
-        cache: "no-store",
+        mode: "cors", cache: "no-store",
       });
+      const dt = Math.round(performance.now() - t0);
+      log(`GET VietQR → ${res.status} (${dt}ms)`, url);
       const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       const qrUrl = data?.url || "";
@@ -353,7 +451,7 @@ class PaymentPageClass extends React.Component {
   async initQRFlow() {
     const oid = await this.waitForOrderId(3000);
     if (!oid) return;
-    await this.ensurePaymentMethodForQR(oid);
+    await this.ensurePaymentMethod(oid, METHOD_MAP.qr);
     await this.fetchVietQR(oid);
     this.startPolling(oid);
   }
@@ -385,17 +483,17 @@ class PaymentPageClass extends React.Component {
           mode: "cors",
           cache: "no-store",
         });
+        const dt = Math.round(performance.now() - t0);
         const data = await this.safeParse(res);
         const item  = Array.isArray(data?.items) ? data.items[0] : null;
         const status = Number(item?.status ?? -1);
-        const dt = Math.round(performance.now() - t0);
-
         console.log(`%c[Poll]%c id=${orderId} status=${status} (${dt}ms, next ${delay}ms)`,
           "color:#06b6d4;font-weight:700", "color:inherit");
 
         if (status === 1) {
           this.stopPolling();
-          this.showPaidAndGo();
+          if (typeof this.showPaidAndGo === "function") this.showPaidAndGo();
+          else this.props.navigate("/orders");
           return true;
         }
       } catch (e) {
@@ -422,14 +520,27 @@ class PaymentPageClass extends React.Component {
   }
 
   handleVisibilityChange() {
-    if (document.hidden) {
-      this.stopPolling();
-    } else {
-      if (this.state.activeTab === "qr") this.initQRFlow();
-    }
+    if (document.hidden) this.stopPolling();
+    else if (this.state.activeTab === "qr") this.initQRFlow();
   }
 
-  /* ===================== PUT SUBMIT (thanh toán) ===================== */
+  /* ---------- Tab click ---------- */
+  setActiveTab = (tab) => {
+    this.setState({ activeTab: tab });
+    this.props.navigate(`/payment?method=${tab}`, { replace: true, state: this.props.location?.state });
+
+    (async () => {
+      const oid = await this.waitForOrderId(3000);
+      const pm  = METHOD_MAP[tab] ?? null;
+      log("User clicked tab:", tab, "→ pm:", pm, "oid:", oid);
+      if (oid && pm) await this.ensurePaymentMethod(oid, pm);
+    })();
+
+    if (tab === "qr") this.initQRFlow();
+    else this.stopPolling();
+  };
+
+  /* ---------- Submit ---------- */
   buildPayload() {
     const { shopId, shiftId } = this.getAuthContext();
     const orderDetails = (this.state.orders || []).map((it) => ({
@@ -437,14 +548,12 @@ class PaymentPageClass extends React.Component {
       productUnitId: Number(it.productUnitId || 0),
       productId: Number(it.id || 0),
     }));
-
-    const methodMap = { cash: 1, qr: 2, nfc: 3, atm: 4 };
-    const paymentMethod = this.state.payMethodId ?? methodMap[this.state.activeTab] ?? null;
+    const paymentMethod = this.state.payMethodId ?? METHOD_MAP[this.state.activeTab] ?? null;
 
     return {
       customerId: this.state.customerId ?? null,
       paymentMethod,
-      status: this.state.activeTab === "cash" ? 1 : 0, // CASH -> thu ngay
+      status: this.state.activeTab === "cash" ? 1 : 0,
       shiftId: shiftId ?? null,
       shopId: shopId ?? null,
       voucherId: null,
@@ -466,6 +575,7 @@ class PaymentPageClass extends React.Component {
 
     try {
       const url = `${API_URL}/api/orders/${targetId}`;
+      const t0 = performance.now();
       const res = await fetch(url, {
         method: "PUT",
         headers: {
@@ -473,11 +583,12 @@ class PaymentPageClass extends React.Component {
           accept: "application/json, text/plain, */*",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        mode: "cors",
-        cache: "no-store",
+        mode: "cors", cache: "no-store",
         body: JSON.stringify(payload),
       });
+      const dt = Math.round(performance.now() - t0);
       const data = await this.safeParse(res);
+      log(`PUT submit(status=${payload.status}) → ${res.status} (${dt}ms)`, url, payload, data);
       if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
 
       if (this.state.activeTab === "cash") this._isPaid = true;
@@ -490,14 +601,19 @@ class PaymentPageClass extends React.Component {
     }
   };
 
-  /* ===================== UI ACTIONS ===================== */
+  /* ---------- UI Actions ---------- */
   handleBack = async () => {
-    this.stopPolling();
-    await this.putStatus2(); // đợi PUT xong / hoặc fail có log
-    this.props.navigate(-1);
+    try {
+      this.stopPolling();
+      const oid = await this.waitForOrderId(2000);
+      log("Back clicked → PUT status=2 cho orderId:", oid);
+      await this.putStatus2(oid);
+    } finally {
+      this.props.navigate(-1);
+    }
   };
 
-  /* ===================== COMPUTED ===================== */
+  /* ---------- Computed ---------- */
   get total() { return this.subtotal(); }
   get effectiveReceived() {
     const entered = Number(this.state.received || 0);
@@ -506,7 +622,7 @@ class PaymentPageClass extends React.Component {
   get change()   { return Math.max(0, this.effectiveReceived - this.total); }
   get shortage() { return Math.max(0, this.total - this.effectiveReceived); }
 
-  /* ===================== RENDER PARTS ===================== */
+  /* ---------- Render parts ---------- */
   SectionHeader() {
     return (
       <div className="text-white flex items-center mb-3">
@@ -608,7 +724,6 @@ class PaymentPageClass extends React.Component {
   RightPanel() {
     const { activeTab, quicks, loading, error, qrUrl, qrLoading, qrError } = this.state;
 
-    // 1) CASH
     if (activeTab === "cash") {
       const keypadBtn = (label, onClick) => (
         <button disabled={loading} onClick={onClick} className="h-14 rounded-lg border text-lg font-semibold hover:bg-gray-50">
@@ -658,7 +773,6 @@ class PaymentPageClass extends React.Component {
       );
     }
 
-    // 2) QR
     if (activeTab === "qr") {
       const oid = this.state.orderId || this.state.displayOrderId || null;
       return (
@@ -698,7 +812,6 @@ class PaymentPageClass extends React.Component {
       );
     }
 
-    // 3) NFC (mock)
     if (activeTab === "nfc") {
       return (
         <div className="w-[420px] bg-white rounded-xl p-4">
@@ -712,7 +825,7 @@ class PaymentPageClass extends React.Component {
               <div className="flex justify-between"><span>Phương thức thanh toán</span><span>NFC</span></div>
               <div className="flex justify-between"><span>Số dư còn</span><span>1.000.000 VND</span></div>
               <div className="flex justify-between font-semibold"><span>Thành tiền</span><span>{fmt.format(this.subtotal())} VND</span></div>
-              <div className="flex justify giữa font-semibold text-[#00A8B0]"><span>Số dư</span><span>{fmt.format(1000000 - this.subtotal())} VND</span></div>
+              <div className="flex justify-between font-semibold text-[#00A8B0]"><span>Số dư</span><span>{fmt.format(1000000 - this.subtotal())} VND</span></div>
             </div>
           </div>
           <Button className="w-full h-12 mt-6 bg-[#00A8B0] hover:opacity-90">Thanh toán</Button>
@@ -720,7 +833,6 @@ class PaymentPageClass extends React.Component {
       );
     }
 
-    // 4) ATM (mock done)
     if (activeTab === "atm") {
       return (
         <div className="w-[420px] bg-white rounded-xl p-4">
@@ -742,7 +854,6 @@ class PaymentPageClass extends React.Component {
     return null;
   }
 
-  /* ===================== RENDER ROOT ===================== */
   render() {
     return (
       <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40] p-3">
@@ -764,7 +875,7 @@ class PaymentPageClass extends React.Component {
   }
 }
 
-/* ---------- Wrapper để dùng navigate + location ---------- */
+/* ---------- Wrapper ---------- */
 export default function PaymentPage() {
   const navigate = useNavigate();
   const location = useLocation();
