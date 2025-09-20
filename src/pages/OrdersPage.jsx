@@ -1,3 +1,4 @@
+
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -63,7 +64,7 @@ class OrdersPageClass extends React.Component {
     loading: false,
 
     activeTab: "all",
-    productsByTab: {}, // tabValue: items, loading, error 
+    productsByTab: {}, // tabValue: { items, loading, error }
     search: "",
 
     shopId: null,
@@ -74,6 +75,7 @@ class OrdersPageClass extends React.Component {
 
   mounted = false;
 
+  /* ===================== LIFECYCLE ===================== */
   componentDidMount() {
     this.mounted = true;
     logApp("OrdersPage mounted");
@@ -126,6 +128,7 @@ class OrdersPageClass extends React.Component {
     }
   }
 
+  /* ===================== UTILS ===================== */
   safeParse = async (res) => {
     try { return await res.json(); }
     catch {
@@ -133,7 +136,38 @@ class OrdersPageClass extends React.Component {
       try { return JSON.parse(text); } catch { return { raw: text }; }
     }
   };
+// ===== DEBUG HELPERS & VALIDATION =====
+validateCartLines = (orders = []) => {
+  const issues = [];
+  orders.forEach((o, i) => {
+    const pid  = Number(o?.id || 0);
+    const puid = Number(o?.productUnitId ?? o?.unitOptions?.[0]?.productUnitId ?? 0);
+    const qty  = Number(o?.qty || 0);
+    if (!pid)  issues.push({ idx: i, reason: "Missing productId", line: o });
+    if (!puid) issues.push({ idx: i, reason: "Missing productUnitId", line: o });
+    if (!qty)  issues.push({ idx: i, reason: "Quantity = 0", line: o });
+  });
+  return issues;
+};
 
+logCartMap = (orders = [], orderDetails = []) => {
+  console.groupCollapsed("%c[CART→PAYLOAD] Map lines", "color:#22d3ee;font-weight:700");
+  console.table(
+    orders.map((o, i) => ({
+      idx: i,
+      name: o.name,
+      productId: o.id,
+      productUnitId: o.productUnitId,
+      unitOptions0: o.unitOptions?.[0]?.productUnitId ?? null,
+      qty: o.qty,
+      price: o.price,
+    }))
+  );
+  console.table(orderDetails.map((d, i) => ({ idx: i, ...d })));
+  console.groupEnd();
+};
+
+  /* ===================== FETCH CATALOG ===================== */
   fetchCategories = async () => {
     if (!this.state.shopId) return;
     const token = localStorage.getItem("accessToken");
@@ -216,9 +250,7 @@ class OrdersPageClass extends React.Component {
       const unitsByPid = {};
       byPid.forEach((rows, pid) => {
         const base = pickBaseUnit(rows);
-        const sorted = base
-          ? [base, ...rows.filter(r => r !== base)]
-          : rows;
+        const sorted = base ? [base, ...rows.filter(r => r !== base)] : rows;
         unitsByPid[pid] = sorted.map(u => ({
           productUnitId: Number(u.productUnitId),
           unitName: u.unitName,
@@ -239,7 +271,7 @@ class OrdersPageClass extends React.Component {
   };
 
   ensureUnitsForProduct = async (productId) => {
-    if (this.state.unitsByPid[productId]?.length) return; 
+    if (this.state.unitsByPid[productId]?.length) return;
     const token = localStorage.getItem("accessToken");
     try {
       const url = `${API_URL}/api/product-units?ShopId=${this.state.shopId}&ProductId=${productId}&page=1&pageSize=500`;
@@ -268,6 +300,7 @@ class OrdersPageClass extends React.Component {
     }
   };
 
+  /* ===================== PRODUCTS CACHE ===================== */
   ensureProducts = async (tabValue, force = false) => {
     const entry = this.state.productsByTab[tabValue];
     const shouldSkip = entry?.items?.length || entry?.loading;
@@ -308,14 +341,14 @@ class OrdersPageClass extends React.Component {
         .map((p) => {
           const pid = Number(p.productId);
           const unitRows = this.state.unitsByPid[pid] || [];
-          const base = unitRows.length ? unitRows[0] : null; 
+          const base = unitRows.length ? unitRows[0] : null;
           return {
             id: pid,
             name: p.productName,
             price: base ? base.price : (p.price ?? 0),
             unit: base ? base.unitName : "—",
             productUnitId: base ? base.productUnitId : undefined,
-            unitOptions: unitRows, 
+            unitOptions: unitRows,
             img: p.imageUrl || "https://via.placeholder.com/150",
           };
         });
@@ -335,6 +368,8 @@ class OrdersPageClass extends React.Component {
       logProd("ERROR", errorMsg);
     }
   };
+
+  /* ===================== CART OPS ===================== */
   setSearch = (v) => this.setState({ search: v });
   setActiveTab = (v) => this.setState({ activeTab: v });
   setActiveIdx = (i) => this.setState({ activeIdx: i });
@@ -479,6 +514,7 @@ class OrdersPageClass extends React.Component {
     });
   };
 
+  /* ===================== AUTH / MISC ===================== */
   logout = () => {
     logAuth("logout");
     localStorage.removeItem("accessToken");
@@ -487,6 +523,143 @@ class OrdersPageClass extends React.Component {
     this.props.navigate("/");
   };
 
+ //ORDER API
+  buildOrderPayload = () => {
+  // shopId từ profile
+  let profile = null;
+  try {
+    profile =
+      JSON.parse(localStorage.getItem("userProfile") || "null") ||
+      JSON.parse(localStorage.getItem("auth") || "null")?.profile || null;
+  } catch {}
+  const shopId = Number(profile?.shopId || 0) || null;
+
+  // shiftId từ auth/currentShift
+  let shiftId = null;
+  try {
+    const auth = JSON.parse(localStorage.getItem("auth") || "null");
+    if (auth?.currentShift?.shiftId != null) shiftId = Number(auth.currentShift.shiftId);
+    if (!shiftId && auth?.shiftId != null)   shiftId = Number(auth.shiftId);
+  } catch {}
+  if (!shiftId) {
+    const cur = JSON.parse(localStorage.getItem("currentShift") || "null");
+    if (cur?.shiftId != null) shiftId = Number(cur.shiftId);
+  }
+
+  const orders = this.state.invoices[this.state.activeIdx]?.orders || [];
+
+  const issues = this.validateCartLines(orders);
+  if (issues.length) {
+    console.group("%c[CART] Validation issues", "color:#ef4444;font-weight:700");
+    console.table(issues.map(x => ({ idx: x.idx, reason: x.reason, name: x.line?.name })));
+    console.groupEnd();
+  }
+
+  // Map có fallback productUnitId
+  const mapped = orders.map((it, idx) => {
+    const pid  = Number(it.id || 0);
+    const puid = Number(it.productUnitId ?? it.unitOptions?.[0]?.productUnitId ?? 0);
+    const qty  = Number(it.qty || 0);
+    return {
+      __debug: { idx, name: it.name }, 
+      quantity: qty,
+      productUnitId: puid,
+      productId: pid,
+    };
+  });
+
+  const orderDetails = mapped.filter(d => d.productId > 0 && d.productUnitId > 0 && d.quantity > 0);
+
+  if (orderDetails.length !== orders.length) {
+    const dropped = mapped
+      .map((d, i) => ({ i, ok: d.productId > 0 && d.productUnitId > 0 && d.quantity > 0, name: d.__debug.name }))
+      .filter(x => !x.ok);
+    console.warn("[CART] Dropped invalid lines:", dropped);
+  }
+
+  this.logCartMap(orders, orderDetails);
+
+  const payload = {
+    customerId: null,                       // Khách lẻ
+    paymentMethod: this.state.payMethodId || 1, // tạm tiền mặt
+    status: 0,                              // chờ thanh toán
+    shiftId: shiftId ?? null,               // từ auth
+    shopId,                                 // từ profile
+    voucherId: null,
+    discount: null,
+    note: "",
+    orderDetails,
+  };
+
+  console.groupCollapsed("%c[BUILD] Final payload /api/orders", "color:#22c55e;font-weight:700");
+  console.log(payload);
+  console.groupEnd();
+
+  return payload;
+};
+
+
+submitOrder = async () => {
+  this.setState({ loading: true, error: "" });
+
+  const token = localStorage.getItem("accessToken") || "";
+  const payload = this.buildOrderPayload();
+
+  try {
+    console.groupCollapsed("%c[POST] /api/orders request", "color:#06b6d4;font-weight:700");
+    console.log("Headers: {Content-Type: application/json, Authorization: Bearer ...}");
+    console.log("Body:", JSON.stringify(payload, null, 2));
+    console.groupEnd();
+
+    const res = await fetch(`${API_URL}/api/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        accept: "application/json, text/plain, */*",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      mode: "cors",
+      body: JSON.stringify(payload),
+    });
+
+    const data = await this.safeParse(res);
+
+    console.groupCollapsed("%c[POST] /api/orders response", "color:#ea580c;font-weight:700");
+    console.log("status:", res.status, res.ok);
+    console.log("body:", data);
+    console.groupEnd();
+
+    if (!res.ok) {
+      if (data?.errors) {
+        console.warn("[POST] validation errors:", data.errors);
+      }
+      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+    }
+
+    const orderId = data?.orderId ?? data?.id ?? data?.data?.orderId ?? 0;
+    const currentOrders = this.getActiveOrders();
+
+    this.props.navigate("/payment", {
+      state: {
+        orderId,
+        customerId: payload.customerId ?? null,
+        note: payload.note || "",
+        paymentMethod: payload.paymentMethod ?? 1,
+        orders: currentOrders,
+        total: currentOrders.reduce((s, it) => s + Number(it.price) * Number(it.qty), 0),
+      },
+    });
+  } catch (e) {
+    console.error("[Orders] POST /api/orders error:", e);
+    this.setState({ error: e.message || "Lỗi tạo đơn hàng" });
+  } finally {
+    this.setState({ loading: false });
+  }
+};
+
+
+
+  /* ===================== RENDER ===================== */
   render() {
     const {
       invoices, activeIdx,
@@ -495,7 +668,6 @@ class OrdersPageClass extends React.Component {
       shopId, authErr,
     } = this.state;
 
-    const invoiceNo = invoices[activeIdx]?.id || 1;
     const orders = invoices[activeIdx]?.orders || [];
     const total = orders.reduce((s, it) => s + it.price * it.qty, 0);
 
@@ -770,13 +942,19 @@ class OrdersPageClass extends React.Component {
                   <Button variant="outline" className="rounded-xl border-[#00A8B0] text-[#00A8B0] w-[220px]">
                     Thông báo
                   </Button>
-                  <Button className="rounded-xl bg-[#00A8B0] flex-1">Thanh toán</Button>
+                  <Button
+  className="rounded-xl bg-[#00A8B0] flex-1"
+  onClick={this.submitOrder}
+  disabled={(this.state.invoices[this.state.activeIdx]?.orders?.length ?? 0) === 0}
+>
+  Thanh toán
+</Button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>      
+      </div>
     );
   }
 }

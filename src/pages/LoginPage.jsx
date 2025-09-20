@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
@@ -16,12 +14,9 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  // Chuẩn hoá dữ liệu từ nhiều kiểu response khác nhau
   const normalizeLoginData = (raw) => {
-    // Có thể là { success, message, data: {...} } hoặc {...}
     const root = raw?.data && typeof raw.data === "object" ? raw.data : raw;
 
-    // Trích token theo vài key phổ biến
     const token =
       root?.accessToken ??
       raw?.accessToken ??
@@ -29,7 +24,6 @@ export default function LoginPage() {
       raw?.data?.accessToken ??
       null;
 
-    // Trích các trường còn lại theo mẫu BE của bạn
     const profile = {
       userId: root?.userId ?? root?.id ?? null,
       username: root?.username ?? null,
@@ -45,11 +39,10 @@ export default function LoginPage() {
     return { token, profile };
   };
 
-  // Lưu vào localStorage 1 lần, có namespace rõ ràng
+  // LưulocalStorage
   const persistAuth = ({ token, profile }) => {
     if (token) localStorage.setItem("accessToken", token);
     if (profile) localStorage.setItem("userProfile", JSON.stringify(profile));
-    // Gói chung để tiện debug/đồng bộ (tuỳ ý)
     localStorage.setItem(
       "auth",
       JSON.stringify({
@@ -67,7 +60,6 @@ export default function LoginPage() {
 
     const url = `${API_URL}/api/authentication/login`;
 
-    // 3 biến thể payload hay gặp
     const payloads = [
       { username, password },
       { userName: username, password },
@@ -108,23 +100,19 @@ export default function LoginPage() {
         console.debug("[login] status:", res.status, "data:", data);
 
         if (res.ok) {
-          // Chuẩn hoá & lưu trữ toàn bộ thông tin cần thiết
           const { token, profile } = normalizeLoginData(data);
           persistAuth({ token, profile });
 
-          // Điều hướng
-          navigate("/orders");
+          navigate("/open-shift");
           return;
         } else {
           const msg =
             data?.message || data?.error || data?.raw || `HTTP ${res.status}`;
           lastError = { code: res.status, msg };
-          // Nếu 4xx => khả năng sai tài khoản/mật khẩu, dừng thử payload khác
           if (res.status >= 400 && res.status < 500) break;
         }
       }
 
-      // nếu tới đây là fail cả 3 payload
       const code = lastError?.code || 500;
       const msg = lastError?.msg || "Đăng nhập thất bại!";
       setError(`Đăng nhập lỗi (HTTP ${code}): ${msg}`);
@@ -138,12 +126,12 @@ export default function LoginPage() {
   return (
     <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40] p-3">
       <div className="flex bg-[#012E40] h-full">
-        {/* LEFT: Illustration */}
+        {/* LEFT*/}
         <div className="hidden md:flex items-center justify-center w-1/2 bg-white overflow-hidden">
           <img src={loginArt} alt="login" className="w-full h-auto object-contain" />
         </div>
 
-        {/* RIGHT: Login form */}
+        {/* RIGHT*/}
         <div className="flex items-center justify-center w-full md:w-1/2 bg-white">
           <div className="w-full max-w-md px-8 py-10">
             <h1 className="text-3xl font-bold text-gray-900 text-center">Đăng nhập</h1>
@@ -154,7 +142,7 @@ export default function LoginPage() {
             )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-              {/* Username */}
+              
               <div className="relative">
                 <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-[#00A8B0]" />
                 <Input
@@ -166,7 +154,6 @@ export default function LoginPage() {
                 />
               </div>
 
-              {/* Password */}
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-[#00A8B0]" />
                 <Input
@@ -186,7 +173,6 @@ export default function LoginPage() {
                 </button>
               </div>
 
-              {/* Submit */}
               <Button
                 type="submit"
                 className="h-12 w-full rounded-lg bg-[#00A8B0] text-white hover:opacity-90 disabled:opacity-60"
