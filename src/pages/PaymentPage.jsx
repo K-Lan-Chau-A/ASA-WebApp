@@ -1,4 +1,4 @@
-// src/pages/PaymentPage.jsx
+
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,9 @@ const err  = (m, ...a) => console.error(`%c[Payment]%c ${m}`, "color:#ef4444;fon
 
 const PAY_TABS = [
   { id: "cash", label: "Tiền mặt" },
-  { id: "atm",  label: "ATM" },
-  { id: "qr",   label: "QR Code" },
+  { id: "qr",   label: "Chuyển khoản" },
   { id: "nfc",  label: "NFC" },
+  { id: "atm",  label: "ATM" },
 ];
 
 class PaymentPageClass extends React.Component {
@@ -40,6 +40,9 @@ class PaymentPageClass extends React.Component {
 
   componentDidMount() {
     log("Mounted");
+    if (!this.state.orders.length && this.state.orderId) {
+      this.fetchOrderDetailsFor(this.state.orderId);
+    }
     this.fetchLatestOrderId();
   }
 
@@ -51,6 +54,14 @@ class PaymentPageClass extends React.Component {
       this.setState({ activeTab: nowMethod });
     }
   }
+
+  safeParse = async (res) => {
+    try { return await res.json(); }
+    catch {
+      const t = await res.text().catch(() => "");
+      try { return JSON.parse(t); } catch { return { raw: t }; }
+    }
+  };
 
   subtotal = () =>
     (this.state.orders || []).reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
@@ -64,14 +75,6 @@ class PaymentPageClass extends React.Component {
   keyIn        = (n) => this.setState((s) => ({ received: Number(String(s.received) + String(n)) }));
   keyClear     = () => this.setState({ received: 0 });
   keyBackspace = () => this.setState((s) => ({ received: Number(String(s.received).slice(0, -1) || 0) }));
-
-  safeParse = async (res) => {
-    try { return await res.json(); }
-    catch {
-      const t = await res.text().catch(() => "");
-      try { return JSON.parse(t); } catch { return { raw: t }; }
-    }
-  };
 
   getAuthContext() {
     let profile = null;
@@ -100,6 +103,7 @@ class PaymentPageClass extends React.Component {
     const { shopId, shiftId } = this.getAuthContext();
     if (!shopId || !shiftId) {
       warn("Không có shopId/shiftId -> bỏ qua fetchLatestOrderId");
+      this.setState({ displayOrderId: this.state.orderId || null });
       return;
     }
 
@@ -117,10 +121,65 @@ class PaymentPageClass extends React.Component {
       const list = Array.isArray(data?.items) ? data.items : [];
       const maxId = list.reduce((m, it) => Math.max(m, Number(it.orderId || 0)), 0);
       log("Latest orderId =", maxId, "items length =", list.length);
-      this.setState({ displayOrderId: maxId || this.state.orderId || null });
+
+      this.setState(
+        { displayOrderId: maxId || this.state.orderId || null },
+        () => {
+          if (!this.state.orders.length && (maxId || this.state.orderId)) {
+            this.fetchOrderDetailsFor(maxId || this.state.orderId);
+          }
+        }
+      );
     } catch (e) {
       err("fetchLatestOrderId failed:", e);
       this.setState({ displayOrderId: this.state.orderId || null });
+    }
+  }
+
+  mapOrderDetailsToCartLines(raw = []) {
+    return raw.map((d, i) => {
+      const qty  = Number(d.quantity ?? 0);
+      const pid  = Number(d.productId ?? 0);
+      const puid = Number(d.productUnitId ?? 0);
+      const unitPrice = Number(d.totalPrice ?? 0) / Math.max(1, qty || 1);
+
+      return {
+        id: pid,
+        productUnitId: puid,
+        qty,
+        price: unitPrice,
+        name: `Sản phẩm #${pid}`,
+        unit: "",
+        note: "",
+        unitOptions: [],
+        img: "https://via.placeholder.com/150",
+        __src: "order-details",
+        __idx: i,
+      };
+    });
+  }
+
+  async fetchOrderDetailsFor(orderId) {
+    if (!orderId) return;
+    const token = localStorage.getItem("accessToken") || "";
+    const url   = `${API_URL}/api/order-details?OrderId=${orderId}&page=1&pageSize=5000`;
+    log("GET order-details:", url);
+
+    try {
+      const res  = await fetch(url, {
+        headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        mode: "cors",
+      });
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const lines = this.mapOrderDetailsToCartLines(items);
+      log("Order-details mapped lines:", lines);
+
+      this.setState((s) => (s.orders?.length ? null : { orders: lines }));
+    } catch (e) {
+      err("fetchOrderDetailsFor failed:", e);
     }
   }
 
@@ -131,10 +190,14 @@ class PaymentPageClass extends React.Component {
       productUnitId: Number(it.productUnitId || 0),
       productId: Number(it.id || 0),
     }));
+
+    const methodMap = { cash: 1, qr: 2, nfc: 3, atm: 4 }; 
+    const paymentMethod = this.state.payMethodId ?? methodMap[this.state.activeTab] ?? null;
+
     const payload = {
       customerId: this.state.customerId ?? null,
-      paymentMethod: this.state.payMethodId ?? null,
-      status: 0,
+      paymentMethod,
+      status: this.state.activeTab === "cash" ? 1 : 0,
       shiftId: shiftId ?? null,
       shopId: shopId ?? null,
       voucherId: null,
@@ -151,9 +214,21 @@ class PaymentPageClass extends React.Component {
     const token = localStorage.getItem("accessToken") || "";
     const payload = this.buildPayload();
 
+    const targetId = Number(this.state.orderId || this.state.displayOrderId || 0) || null;
+    if (!targetId) {
+      this.setState({
+        loading: false,
+        error: "Không có orderId để cập nhật. Vui lòng tạo đơn ở màn hình trước.",
+      });
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_URL}/api/orders`, {
-        method: "POST",
+      const url = `${API_URL}/api/orders/${targetId}`;
+      log(`PUT ${url}`, payload);
+
+      const res = await fetch(url, {
+        method: "PUT",
         headers: {
           "Content-Type": "application/json",
           accept: "application/json, text/plain, */*",
@@ -162,30 +237,40 @@ class PaymentPageClass extends React.Component {
         mode: "cors",
         body: JSON.stringify(payload),
       });
+
       const data = await this.safeParse(res);
-      log("POST /api/orders ->", res.status, data);
+      log("PUT /api/orders ->", res.status, data);
       if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
 
-      localStorage.setItem("lastOrderResponse", JSON.stringify(data));
+      localStorage.setItem("lastOrderResponse", JSON.stringify({ id: targetId, ...data }));
       this.props.navigate("/orders");
     } catch (e) {
       err("submitOrder error:", e);
-      this.setState({ error: e.message || "Lỗi tạo đơn hàng" });
+      this.setState({ error: e.message || "Lỗi cập nhật đơn hàng" });
     } finally {
       this.setState({ loading: false });
     }
   };
 
+  /* ===================== CASH Computed ===================== */
+  get total() {
+    return this.subtotal();
+  }
+  get effectiveReceived() {
+    const entered = Number(this.state.received || 0);
+    return entered > 0 ? entered : this.total;
+  }
+  get change() {
+    return Math.max(0, this.effectiveReceived - this.total);
+  }
+  get shortage() {
+    return Math.max(0, this.total - this.effectiveReceived);
+  }
+
   SectionHeader() {
-    const displayOrderId = this.state.displayOrderId || this.state.orderId || null;
     return (
       <div className="text-white flex items-center mb-3">
-        <button
-          onClick={() => this.props.navigate(-1)}
-          className="w-8 h-8 rounded-full bg-white/10 mr-3"
-        >
-          ←
-        </button>
+        <button onClick={() => this.props.navigate(-1)} className="w-8 h-8 rounded-full bg-white/10 mr-3">←</button>
         <div className="text-xl font-semibold">Thanh toán</div>
         <div className="ml-auto">
           <button className="w-10 h-10 rounded-full bg-white/10">🖨️</button>
@@ -202,9 +287,7 @@ class PaymentPageClass extends React.Component {
           <button
             key={t.id}
             onClick={() => this.setActiveTab(t.id)}
-            className={`h-10 rounded-lg border text-sm font-medium ${
-              activeTab === t.id ? "bg-[#00A8B0] text-white border-[#00A8B0]" : "bg-white"
-            }`}
+            className={`h-10 rounded-lg border text-sm font-medium ${activeTab === t.id ? "bg-[#00A8B0] text-white border-[#00A8B0]" : "bg-white"}`}
           >
             {t.label}
           </button>
@@ -219,21 +302,16 @@ class PaymentPageClass extends React.Component {
 
     return (
       <div className="flex-1 bg-white rounded-xl p-4 mr-3">
-        {/* Thông tin KH */}
         <div className="mb-3">
           <div className="text-xs text-gray-500">Thông tin Khách hàng</div>
           <div className="text-lg font-semibold">
-            {customerId == null ? "Khách lẻ" : `KH #${customerId}`}
+            {customerId == null ? "Khách lẻ" : `HĐ #${customerId}`}
           </div>
 
           <div className="text-sm text-gray-500">
             {displayOrderId ? (
-              <>
-                Order # <span className="font-semibold">{displayOrderId}</span>
-              </>
-            ) : (
-              "Đang lấy OrderId..."
-            )}
+              <>Order # <span className="font-semibold">{displayOrderId}</span></>
+            ) : ("Đang lấy OrderId...")}
           </div>
         </div>
 
@@ -243,9 +321,7 @@ class PaymentPageClass extends React.Component {
             <Input placeholder="Voucher" className="h-10 pl-10" />
             <span className="absolute left-3 top-2.5 text-gray-400">🔎</span>
           </div>
-          <Button variant="outline" className="h-10">
-            💲 Chiết khấu trực tiếp
-          </Button>
+          <Button variant="outline" className="h-10">💲 Chiết khấu trực tiếp</Button>
         </div>
 
         {/* Danh sách hàng */}
@@ -254,10 +330,7 @@ class PaymentPageClass extends React.Component {
             <div className="text-sm text-gray-500">Không có sản phẩm.</div>
           ) : (
             orders.map((o, i) => (
-              <div
-                key={`${o.id}-${o.productUnitId ?? "base"}-${i}`}
-                className="flex items-start justify-between py-2"
-              >
+              <div key={`${o.id}-${o.productUnitId ?? "base"}-${i}`} className="flex items-start justify-between py-2">
                 <div>
                   <div className="font-semibold">{i + 1}. {o.name}</div>
                   <div className="text-xs text-gray-500">
@@ -281,9 +354,9 @@ class PaymentPageClass extends React.Component {
           </div>
           <div className="text-right text-gray-600 mt-2">
             {activeTab === "cash" && "Tiền mặt"}
-            {activeTab === "atm" && "ATM"}
-            {activeTab === "qr" && "Chuyển khoản"}
-            {activeTab === "nfc" && "NFC"}
+            {activeTab === "qr"   && "Chuyển khoản"}
+            {activeTab === "nfc"  && "NFC"}
+            {activeTab === "atm"  && "ATM"}
           </div>
         </div>
 
@@ -299,9 +372,9 @@ class PaymentPageClass extends React.Component {
   }
 
   RightPanel() {
-    const { activeTab, quicks, received, loading, error } = this.state;
+    const { activeTab, quicks, loading, error } = this.state;
 
-    // --- CASH (keypad) ---
+    // 1: CASH
     if (activeTab === "cash") {
       const keypadBtn = (label, onClick) => (
         <button
@@ -316,9 +389,24 @@ class PaymentPageClass extends React.Component {
       return (
         <div className="w-[420px] bg-white rounded-xl p-4">
           {this.RenderTabs()}
+
           <div className="text-center my-3">
             <div className="text-[#00A8B0] font-semibold">Đã nhận</div>
-            <div className="text-3xl font-bold mt-1">{fmt.format(received)} VND</div>
+            <div className="text-3xl font-bold mt-1">
+              {fmt.format(this.effectiveReceived)} VND
+            </div>
+
+            <div className="mt-2 text-sm">
+              {this.shortage > 0 ? (
+                <div className="text-red-600">
+                  Còn thiếu: <span className="font-semibold">{fmt.format(this.shortage)} VND</span>
+                </div>
+              ) : (
+                <div className="text-emerald-600">
+                  Tiền thối: <span className="font-semibold">{fmt.format(this.change)} VND</span>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-2">
@@ -334,9 +422,11 @@ class PaymentPageClass extends React.Component {
             ))}
           </div>
 
+          {/* KEYPAD */}
           <div className="grid grid-cols-3 gap-2">
             {["1","2","3","4","5","6","7","8","9"].map((n) =>
-              <button key={`k-${n}`} onClick={() => this.keyIn(n)} disabled={loading} className="h-14 rounded-lg border text-lg font-semibold hover:bg-gray-50">{n}</button>
+              <button key={`k-${n}`} onClick={() => this.keyIn(n)} disabled={loading}
+                      className="h-14 rounded-lg border text-lg font-semibold hover:bg-gray-50">{n}</button>
             )}
             {keypadBtn("000", () => this.keyIn("000"))}
             {keypadBtn("0",   () => this.keyIn(0))}
@@ -344,14 +434,63 @@ class PaymentPageClass extends React.Component {
           </div>
 
           {error && <div className="text-red-600 text-sm mt-3">{error}</div>}
-          <Button disabled={loading} onClick={this.submitOrder} className="w-full h-12 mt-3 bg-[#00A8B0] hover:opacity-90">
-            {loading ? "Đang tạo đơn..." : "Thanh toán"}
+
+          {/* NÚT THANH TOÁN */}
+          <Button
+            disabled={loading || this.shortage > 0}
+            onClick={this.submitOrder}
+            className="w-full h-12 mt-3 bg-[#00A8B0] hover:opacity-90"
+          >
+            {loading ? "Đang cập nhật đơn..." : "Thanh toán"}
           </Button>
         </div>
       );
     }
 
-    // --- ATM (success panel) ---
+    // 2: QR / Chuyển khoản
+    if (activeTab === "qr") {
+      return (
+        <div className="w=[420px] bg-white rounded-xl p-4">
+          {this.RenderTabs()}
+          <div className="text-center mt-6 mb-3 font-semibold">Quét mã để thanh toán</div>
+          <div className="mx-auto w-64 h-64 border rounded-xl grid place-items-center">
+            <img
+              src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=VIETQR-DEMO"
+              alt="VietQR"
+              className="w-[220px] h-[220px]"
+            />
+          </div>
+          <div className="mt-4 border rounded-xl px-4 py-3 font-semibold flex justify-between">
+            <span>Tổng cộng:</span>
+            <span>{fmt.format(this.subtotal())}đ</span>
+          </div>
+        </div>
+      );
+    }
+
+    // 3: NFC
+    if (activeTab === "nfc") {
+      return (
+        <div className="w-[420px] bg-white rounded-xl p-4">
+          {this.RenderTabs()}
+          <div className="mt-4">
+            <div className="text-xl font-bold text-[#00A8B0]">Thông tin Khách hàng</div>
+            <div className="mt-4 space-y-2 text-sm">
+              <div className="flex justify-between"><span>Hóa đơn</span><span className="tabular-nums">{this.state.displayOrderId || this.state.orderId || "—"}</span></div>
+              <div className="flex justify-between"><span>Ngày</span><span>{new Date().toLocaleDateString("vi-VN")}</span></div>
+              <div className="flex justify-between"><span>Thời gian</span><span>{new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span></div>
+              <div className="flex justify-between"><span>Phương thức thanh toán</span><span>NFC</span></div>
+              <div className="flex justify-between"><span>Số dư còn</span><span>1.000.000 VND</span></div>
+              <div className="flex justify-between font-semibold"><span>Thành tiền</span><span>{fmt.format(this.subtotal())} VND</span></div>
+              <div className="flex justify-between font-semibold text-[#00A8B0]"><span>Số dư</span><span>{fmt.format(1000000 - this.subtotal())} VND</span></div>
+            </div>
+          </div>
+          <Button className="w-full h-12 mt-6 bg-[#00A8B0] hover:opacity-90">Thanh toán</Button>
+        </div>
+      );
+    }
+
+    // 4: ATM
     if (activeTab === "atm") {
       return (
         <div className="w-[420px] bg-white rounded-xl p-4">
@@ -370,47 +509,7 @@ class PaymentPageClass extends React.Component {
       );
     }
 
-    // --- QR ---
-    if (activeTab === "qr") {
-      return (
-        <div className="w-[420px] bg-white rounded-xl p-4">
-          {this.RenderTabs()}
-          <div className="text-center mt-6 mb-3 font-semibold">Quét mã để thanh toán</div>
-          <div className="mx-auto w-64 h-64 border rounded-xl grid place-items-center">
-            {/* Thay ảnh QR thật của bạn ở đây */}
-            <img
-              src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=VIETQR-DEMO"
-              alt="VietQR"
-              className="w-[220px] h-[220px]"
-            />
-          </div>
-          <div className="mt-4 border rounded-xl px-4 py-3 font-semibold flex justify-between">
-            <span>Tổng cộng:</span>
-            <span>{fmt.format(this.subtotal())}đ</span>
-          </div>
-        </div>
-      );
-    }
-
-    // --- NFC ---
-    return (
-      <div className="w-[420px] bg-white rounded-xl p-4">
-        {this.RenderTabs()}
-        <div className="mt-4">
-          <div className="text-xl font-bold text-[#00A8B0]">Thông tin Khách hàng</div>
-          <div className="mt-4 space-y-2 text-sm">
-            <div className="flex justify-between"><span>Hóa đơn</span><span className="tabular-nums">{this.state.displayOrderId || this.state.orderId || "—"}</span></div>
-            <div className="flex justify-between"><span>Ngày</span><span>{new Date().toLocaleDateString("vi-VN")}</span></div>
-            <div className="flex justify-between"><span>Thời gian</span><span>{new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span></div>
-            <div className="flex justify-between"><span>Phương thức thanh toán</span><span>NFC</span></div>
-            <div className="flex justify-between"><span>Số dư còn</span><span>1.000.000 VND</span></div>
-            <div className="flex justify-between font-semibold"><span>Thành tiền</span><span>{fmt.format(this.subtotal())} VND</span></div>
-            <div className="flex justify-between font-semibold text-[#00A8B0]"><span>Số dư</span><span>{fmt.format(1000000 - this.subtotal())} VND</span></div>
-          </div>
-        </div>
-        <Button className="w-full h-12 mt-6 bg-[#00A8B0] hover:opacity-90">Thanh toán</Button>
-      </div>
-    );
+    return null;
   }
 
   render() {
@@ -428,11 +527,12 @@ class PaymentPageClass extends React.Component {
   }
 }
 
+// Wrapper để dùng hook
 export default function PaymentPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  const defaultMethod = params.get("method") || "cash"; // cash | atm | qr | nfc
+  const defaultMethod = params.get("method") || "cash"; 
   return (
     <PaymentPageClass
       navigate={navigate}
