@@ -71,6 +71,19 @@ class OrdersPageClass extends React.Component {
     authErr: "",
 
     unitsByPid: {},
+
+        customerSearch: "",
+    foundCustomer: null,
+    loadingCustomer: false,
+    showAddCustomer: false,
+    addingCustomer: {
+      fullName: "",
+      phone: "",
+      email: "",
+      gender: 0,
+      birthday: "",
+    },
+
   };
 
   mounted = false;
@@ -513,6 +526,75 @@ logCartMap = (orders = [], orderDetails = []) => {
       return copy;
     });
   };
+    /* ========== CUSTOMER LOGIC ========== */
+  searchCustomerByPhone = async (phone) => {
+    const { shopId } = this.state;
+    if (!shopId || !phone) return;
+    const token = localStorage.getItem("accessToken");
+
+    this.setState({ loadingCustomer: true, foundCustomer: null });
+
+    try {
+      const url = `${API_URL}/api/customers?ShopId=${shopId}`;
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || "API error");
+
+      const items = Array.isArray(data.items) ? data.items : [];
+      const found = items.find(
+        (c) => String(c.phone).trim() === String(phone).trim()
+      );
+
+      if (this.mounted) this.setState({ foundCustomer: found || null });
+    } catch (e) {
+      console.error("Search customer error:", e);
+    } finally {
+      if (this.mounted) this.setState({ loadingCustomer: false });
+    }
+  };
+
+  createCustomer = async () => {
+    const { shopId, addingCustomer } = this.state;
+    const token = localStorage.getItem("accessToken");
+    if (!addingCustomer.fullName || !addingCustomer.phone)
+      return alert("Vui lòng nhập đủ họ tên và số điện thoại");
+
+    try {
+      const payload = {
+        ...addingCustomer,
+        shopId,
+        spent: 0,
+        status: 1,
+        rankid: "1",
+        rankName: "Đồng",
+      };
+
+      const res = await fetch(`${API_URL}/api/customers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || "Lỗi tạo khách hàng");
+
+      this.setState({
+        foundCustomer: data,
+        showAddCustomer: false,
+        customerSearch: data.phone,
+      });
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
 
   /* ===================== AUTH / MISC ===================== */
   logout = () => {
@@ -580,7 +662,7 @@ logCartMap = (orders = [], orderDetails = []) => {
   this.logCartMap(orders, orderDetails);
 
   const payload = {
-    customerId: null,                       // Khách lẻ
+    customerId: this.state.foundCustomer?.customerId ?? null,                       // Khách lẻ
     paymentMethod: this.state.payMethodId || 1, // tạm tiền mặt
     status: 0,                              // chờ thanh toán
     shiftId: shiftId ?? null,               // từ auth
@@ -843,16 +925,83 @@ submitOrder = async () => {
               <div className="px-4 py-3 border-b flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-[6px] bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px]">■</div>
-                  <span className="text-[#0c5e64] font-semibold">Khách lẻ</span>
-                </div>
-                <div className="flex items-center gap-3 w-[60%]">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                    <Input placeholder="Tìm khách hàng" className="h-9 rounded-full pl-9 pr-10 border-2 border-[#00A8B0] focus-visible:ring-0" />
-                  </div>
-                  <button className="w-9 h-9 rounded-full bg-[#00A8B0] text-white grid place-items-center hover:opacity-90">
-                    <Plus className="w-5 h-5" />
-                  </button>
+                  <div className="px-4 py-3 border-b flex items-center justify-between">
+  {/* KHÁCH HÀNG HIỆN TẠI */}
+  <div className="flex items-center gap-2">
+    <div className="w-8 h-8 rounded-[8px] bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-xs font-bold">
+      KH
+    </div>
+    {this.state.foundCustomer ? (
+      <div>
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-[#0c5e64]">
+            {this.state.foundCustomer.fullName}
+          </span>
+          {this.state.foundCustomer.rankName && (
+            <span className="px-2 py-0.5 text-xs rounded-full bg-[#00A8B0]/10 text-[#00A8B0]">
+              {this.state.foundCustomer.rankName}
+            </span>
+          )}
+          {this.state.foundCustomer.nfcCode && (
+            <span className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+              <Star className="w-3 h-3" /> NFC
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-gray-500">
+          📞 {this.state.foundCustomer.phone}
+        </p>
+      </div>
+    ) : (
+      <span className="text-[#0c5e64] font-semibold">Khách lẻ</span>
+    )}
+  </div>
+
+  {/* THANH TÌM KIẾM */}
+  <div className="flex items-center gap-3 w-[60%]">
+    <div className="relative flex-1">
+      <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+      <Input
+        placeholder="Nhập SĐT khách hàng..."
+        className="h-9 rounded-full pl-9 pr-4 border-2 border-[#00A8B0] focus-visible:ring-0"
+        value={this.state.customerSearch}
+        onChange={(e) => {
+          const v = e.target.value;
+          this.setState({ customerSearch: v });
+          if (v.length >= 5) this.searchCustomerByPhone(v);
+        }}
+      />
+    </div>
+
+    {this.state.foundCustomer ? (
+      <Button
+        variant="outline"
+        className="text-red-500 border-red-400"
+        onClick={() =>
+          this.setState({ foundCustomer: null, customerSearch: "" })
+        }
+      >
+        <X className="w-4 h-4 mr-1" /> Bỏ
+      </Button>
+    ) : (
+      <Button
+        className="bg-[#00A8B0] text-white"
+        onClick={() =>
+          this.setState({
+            showAddCustomer: true,
+            addingCustomer: {
+              ...this.state.addingCustomer,
+              phone: this.state.customerSearch,
+            },
+          })
+        }
+      >
+        <Plus className="w-4 h-4 mr-1" /> Thêm
+      </Button>
+    )}
+  </div>
+</div>
+
                 </div>
               </div>
 
@@ -959,6 +1108,63 @@ submitOrder = async () => {
             </div>
           </div>
         </div>
+        {/* MODAL THÊM KHÁCH HÀNG */}
+{this.state.showAddCustomer && (
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-xl w-[400px] shadow-2xl">
+      <h3 className="text-lg font-bold mb-4 text-[#007E85]">
+        ➕ Thêm khách hàng mới
+      </h3>
+      <div className="space-y-3">
+        <Input
+          placeholder="Họ tên"
+          value={this.state.addingCustomer.fullName}
+          onChange={(e) =>
+            this.setState({
+              addingCustomer: {
+                ...this.state.addingCustomer,
+                fullName: e.target.value,
+              },
+            })
+          }
+        />
+        <Input
+          placeholder="Số điện thoại"
+          value={this.state.addingCustomer.phone}
+          readOnly
+        />
+        <Input
+          placeholder="Email"
+          value={this.state.addingCustomer.email}
+          onChange={(e) =>
+            this.setState({
+              addingCustomer: {
+                ...this.state.addingCustomer,
+                email: e.target.value,
+              },
+            })
+          }
+        />
+      </div>
+
+      <div className="flex justify-end gap-3 mt-5">
+        <Button
+          variant="outline"
+          onClick={() => this.setState({ showAddCustomer: false })}
+        >
+          Hủy
+        </Button>
+        <Button
+          className="bg-[#00A8B0] text-white"
+          onClick={this.createCustomer}
+        >
+          Lưu
+        </Button>
+      </div>
+    </div>
+  </div>
+)}
+
       </div>
     );
   }

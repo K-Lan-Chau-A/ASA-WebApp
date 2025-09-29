@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
+  /* 🔹 Chuẩn hóa dữ liệu từ API Login */
   const normalizeLoginData = (raw) => {
     const root = raw?.data && typeof raw.data === "object" ? raw.data : raw;
 
@@ -31,61 +32,90 @@ export default function LoginPage() {
       shopId: root?.shopId ?? null,
       role: root?.role ?? null,
       avatar: root?.avatar ?? null,
-      requestLimit: root?.requestLimit ?? null,
-      accountLimit: root?.accountLimit ?? null,
       createdAt: root?.createdAt ?? null,
     };
 
     return { token, profile };
   };
 
-  // LưulocalStorage
-  const persistAuth = ({ token, profile }) => {
+  /* 🔹 Lưu Auth vào localStorage */
+  const persistAuth = ({ token, profile, shiftId }) => {
     if (token) localStorage.setItem("accessToken", token);
     if (profile) localStorage.setItem("userProfile", JSON.stringify(profile));
-    localStorage.setItem(
-      "auth",
-      JSON.stringify({
-        token: token ?? null,
-        profile: profile ?? null,
-        savedAt: new Date().toISOString(),
-      })
-    );
+
+    const authObj = {
+      token: token ?? null,
+      profile: profile ?? null,
+      shiftId: shiftId ?? null,
+      currentShift: shiftId ? { shiftId } : null,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem("auth", JSON.stringify(authObj));
+
+    if (shiftId) {
+      localStorage.setItem(
+        "currentShift",
+        JSON.stringify({ shiftId, openedAt: new Date().toISOString() })
+      );
+
+      const up = JSON.parse(localStorage.getItem("userProfile") || "null") || {};
+      localStorage.setItem("userProfile", JSON.stringify({ ...up, shiftId }));
+    }
   };
 
+  /* 🔹 Parse JSON an toàn */
+  const safeParse = async (res) => {
+    try {
+      return await res.json();
+    } catch {
+      const text = await res.text().catch(() => "");
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { raw: text };
+      }
+    }
+  };
+
+  /* 🔹 Lấy ca gần nhất theo shopId */
+  const fetchLastShiftByShop = async (shopId, token) => {
+    try {
+      const url = `${API_URL}/api/shifts?ShopId=${shopId}&page=1&pageSize=1&sort=desc`;
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        mode: "cors",
+      });
+
+      const data = await safeParse(res);
+      if (!res.ok) throw new Error(data?.message || "Không thể lấy ca gần nhất");
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      return items[0] || null;
+    } catch (e) {
+      console.error("[Login] fetchLastShiftByShop error:", e);
+      return null;
+    }
+  };
+
+  /* 🔹 Đăng nhập */
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     const url = `${API_URL}/api/authentication/login`;
-
     const payloads = [
       { username, password },
       { userName: username, password },
       { email: username, password },
     ];
 
-    // helper parse body dù server trả json hay text
-    const safeParse = async (res) => {
-      try {
-        return await res.json();
-      } catch {
-        const text = await res.text().catch(() => "");
-        try {
-          return JSON.parse(text);
-        } catch {
-          return { raw: text };
-        }
-      }
-    };
-
     try {
       let lastError;
       for (let i = 0; i < payloads.length; i++) {
-        const body = JSON.stringify(payloads[i]);
-        console.debug("[login] try payload", payloads[i]);
-
         const res = await fetch(url, {
           method: "POST",
           headers: {
@@ -93,7 +123,7 @@ export default function LoginPage() {
             "Content-Type": "application/json",
           },
           mode: "cors",
-          body,
+          body: JSON.stringify(payloads[i]),
         });
 
         const data = await safeParse(res);
@@ -103,7 +133,29 @@ export default function LoginPage() {
           const { token, profile } = normalizeLoginData(data);
           persistAuth({ token, profile });
 
-          navigate("/open-shift");
+          const shopId = Number(profile?.shopId || 0);
+          if (!shopId) {
+            setError("Không tìm thấy ShopId trong hồ sơ người dùng.");
+            setLoading(false);
+            return;
+          }
+
+          // 🔍 Check ca gần nhất
+          const lastShift = await fetchLastShiftByShop(shopId, token);
+
+          if (lastShift && Number(lastShift.status) === 1) {
+            // ✅ Có ca đang mở
+            const shiftId =
+              lastShift?.shiftId ?? lastShift?.id ?? lastShift?.shift?.id;
+            console.log("[Login] Found open shift:", shiftId);
+            persistAuth({ token, profile, shiftId });
+            navigate("/orders");
+          } else {
+            // ❌ Không có ca đang mở → chuyển sang mở ca
+            console.log("[Login] No open shift → go to open-shift");
+            navigate("/open-shift");
+          }
+
           return;
         } else {
           const msg =
@@ -123,26 +175,36 @@ export default function LoginPage() {
     }
   };
 
+  /* 🔹 UI */
   return (
     <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40] p-3">
       <div className="flex bg-[#012E40] h-full">
-        {/* LEFT*/}
+        {/* LEFT */}
         <div className="hidden md:flex items-center justify-center w-1/2 bg-white overflow-hidden">
-          <img src={loginArt} alt="login" className="w-full h-auto object-contain" />
+          <img
+            src={loginArt}
+            alt="login"
+            className="w-full h-auto object-contain"
+          />
         </div>
 
-        {/* RIGHT*/}
+        {/* RIGHT */}
         <div className="flex items-center justify-center w-full md:w-1/2 bg-white">
           <div className="w-full max-w-md px-8 py-10">
-            <h1 className="text-3xl font-bold text-gray-900 text-center">Đăng nhập</h1>
-            <p className="mt-2 text-center text-[#00A8B0]">Nhập ID của bạn để đăng nhập</p>
+            <h1 className="text-3xl font-bold text-gray-900 text-center">
+              Đăng nhập
+            </h1>
+            <p className="mt-2 text-center text-[#00A8B0]">
+              Nhập ID của bạn để đăng nhập
+            </p>
 
             {error && (
-              <div className="mt-4 text-sm text-red-600 text-center">{error}</div>
+              <div className="mt-4 text-sm text-red-600 text-center">
+                {error}
+              </div>
             )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-              
               <div className="relative">
                 <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-[#00A8B0]" />
                 <Input
@@ -182,7 +244,9 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            <div className="mt-16 text-center text-[13px] text-orange-500">Kỳ Lân Châu Á</div>
+            <div className="mt-16 text-center text-[13px] text-orange-500">
+              Kỳ Lân Châu Á
+            </div>
           </div>
         </div>
       </div>
