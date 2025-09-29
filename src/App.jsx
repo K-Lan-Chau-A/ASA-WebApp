@@ -4,6 +4,7 @@ import OpenShiftPage from './pages/OpenShiftPage';
 import PaymentPage from './pages/PaymentPage';
 import ProductPage from './pages/ProductPage';
 import CategoryPage from './pages/CategoryPage';
+import CustomerPage from './pages/CustomerPage';
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
 
 
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/payment" element={<PaymentPage />} />
             <Route path="/products" element={<ProductPage />} />
             <Route path="/categories" element={<CategoryPage />} />
+            <Route path="/customers" element={<CustomerPage />} />
           </Routes>
         </main>
 
