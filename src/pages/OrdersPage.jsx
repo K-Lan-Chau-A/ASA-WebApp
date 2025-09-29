@@ -829,7 +829,12 @@ submitOrder = async () => {
                     <ChevronDown className="w-4 h-4" />
                   </button>
                 </div>
-                <IconBtn title="Menu"><Menu className="w-6 h-6" /></IconBtn>
+                <IconBtn
+                  title="Menu"
+                  onClick={() => this.props.navigate("/products")}
+                >
+                  <Menu className="w-6 h-6" />
+                </IconBtn>
                 <IconBtn title="Đăng xuất" onClick={this.logout}><LogOut className="w-5 h-5" /></IconBtn>
               </div>
             </div>
