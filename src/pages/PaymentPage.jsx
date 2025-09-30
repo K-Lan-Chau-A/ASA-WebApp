@@ -124,10 +124,18 @@ class PaymentPageClass extends React.Component {
   };
 
   showPaidAndGo = () => {
-    this._isPaid = true;
-    this.showToast("Thanh toán thành công", 1000);
-    setTimeout(() => this.props.navigate("/orders"), 800);
-  };
+  this._isPaid = true;
+  this.setState({
+    customerId: null,
+    customerSearch: "",
+    foundCustomer: null,
+    payMethodId: null,
+  });
+  this.showToast("Thanh toán thành công", 1000);
+    localStorage.setItem("resetCustomer", "1");
+  setTimeout(() => this.props.navigate("/orders"), 800);
+};
+
 
   getAuthContext() {
     let profile = null;

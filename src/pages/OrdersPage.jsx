@@ -9,7 +9,7 @@ import API_URL from "@/config/api";
 import {
   Search, Star, Heart, Plus, LogOut,
   AlertCircle, Bell, ChevronDown, Menu, Printer, Volume2,
-  Trash2
+  Trash2, X
 } from "lucide-react";
 
 const DEBUG = true;
@@ -84,6 +84,8 @@ class OrdersPageClass extends React.Component {
       birthday: "",
     },
 
+    customerSuggestions: [],
+     
   };
 
   mounted = false;
@@ -93,13 +95,12 @@ class OrdersPageClass extends React.Component {
     this.mounted = true;
     logApp("OrdersPage mounted");
 
+if (localStorage.getItem("resetCustomer") === "1") {
+    this.clearCustomer();
+    localStorage.removeItem("resetCustomer");
+  }
     const token = localStorage.getItem("accessToken");
-    logAuth("accessToken", !!token);
-    if (!token) {
-      logAuth("No token -> redirect /");
-      this.props.navigate("/");
-      return;
-    }
+    if (!token) return this.props.navigate("/");
 
     let profile = null;
     try {
@@ -107,22 +108,25 @@ class OrdersPageClass extends React.Component {
         JSON.parse(localStorage.getItem("userProfile") || "null") ||
         JSON.parse(localStorage.getItem("auth") || "null")?.profile ||
         null;
-    } catch (e) {
-      logAuth("Parse profile error", e);
-    }
-    logAuth("profile", profile);
-
+    } catch {}
     const sId = Number(profile?.shopId);
     if (!sId) {
       this.setState({ authErr: "Không tìm thấy shopId trong hồ sơ người dùng." });
-      logAuth("Missing shopId");
-    } else {
-      this.setState({ shopId: sId }, () => {
-        logAuth("shopId =", this.state.shopId);
-        this.fetchUnitsAllByShop();
-        this.fetchCategories();
-      });
+      return;
     }
+    
+    const saved = localStorage.getItem("selectedCustomer");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        this.setState({ foundCustomer: parsed, customerSearch: parsed.phone });
+      } catch {}
+    }
+
+    this.setState({ shopId: sId }, () => {
+      this.fetchUnitsAllByShop();
+      this.fetchCategories();
+    });
   }
 
   componentWillUnmount() {
@@ -532,7 +536,7 @@ logCartMap = (orders = [], orderDetails = []) => {
     if (!shopId || !phone) return;
     const token = localStorage.getItem("accessToken");
 
-    this.setState({ loadingCustomer: true, foundCustomer: null });
+    this.setState({ loadingCustomer: true, customerSuggestions: [] });
 
     try {
       const url = `${API_URL}/api/customers?ShopId=${shopId}`;
@@ -546,17 +550,37 @@ logCartMap = (orders = [], orderDetails = []) => {
       if (!res.ok) throw new Error(data?.message || "API error");
 
       const items = Array.isArray(data.items) ? data.items : [];
-      const found = items.find(
-        (c) => String(c.phone).trim() === String(phone).trim()
+      const suggestions = items.filter((c) =>
+        String(c.phone || "").startsWith(String(phone).trim())
       );
 
-      if (this.mounted) this.setState({ foundCustomer: found || null });
+      if (this.mounted) this.setState({ customerSuggestions: suggestions });
     } catch (e) {
       console.error("Search customer error:", e);
     } finally {
       if (this.mounted) this.setState({ loadingCustomer: false });
     }
   };
+
+  handleSelectCustomer = (c) => {
+    this.setState({
+      foundCustomer: c,
+      customerSearch: c.phone,
+      customerSuggestions: [],
+    });
+    localStorage.setItem("selectedCustomer", JSON.stringify(c));
+  };
+
+  clearCustomer = () => {
+  localStorage.removeItem("selectedCustomer");
+  this.setState({
+    selectedCustomer: null,
+    foundCustomer: null,
+    customerSearch: "",
+    customerId: null,
+  });
+};
+
 
   createCustomer = async () => {
     const { shopId, addingCustomer } = this.state;
@@ -731,6 +755,7 @@ submitOrder = async () => {
         total: currentOrders.reduce((s, it) => s + Number(it.price) * Number(it.qty), 0),
       },
     });
+    this.clearCustomer();
   } catch (e) {
     console.error("[Orders] POST /api/orders error:", e);
     this.setState({ error: e.message || "Lỗi tạo đơn hàng" });
@@ -824,21 +849,32 @@ submitOrder = async () => {
                           ) : list && list.length ? (
                             list.map((p) => (
                               <Card key={`${c.id}-${p.id}`} className="relative overflow-hidden">
-                                <CardContent className="p-2 flex flex-col items-center">
+                                <CardContent className="p-2 flex flex-col items-center text-center">
                                   <button className="absolute top-2 right-2 text-gray-500 hover:text-red-500">
                                     <Heart size={18} />
                                   </button>
+
                                   <img
                                     src={p.img}
                                     alt={p.name}
                                     className="w-full h-32 object-cover rounded-lg"
                                     onError={(e) => { e.currentTarget.src = "https://via.placeholder.com/150"; }}
                                   />
-                                  <h3 className="mt-2 text-sm font-semibold">{p.name}</h3>
-                                  <p className="text-orange-500 font-bold">{fmt.format(p.price)}đ</p>
-                                  <div className="text-xs text-gray-500">
+
+                                  {/* Tên sản phẩm */}
+                                  <h3 className="mt-2 text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
+                                    {p.name}
+                                  </h3>
+
+                                  {/* Giá */}
+                                  <p className="text-orange-500 font-bold min-h-[1.5rem]">{fmt.format(p.price)}đ</p>
+
+                                  {/* Đơn vị */}
+                                  <div className="text-xs text-gray-500 min-h-[1rem]">
                                     Đơn vị mặc định: {p.unit || "—"}
                                   </div>
+
+                                  {/* Đánh giá + Add */}
                                   <div className="flex items-center justify-between w-full mt-2">
                                     <div className="flex items-center text-yellow-500 text-xs">
                                       <Star size={14} fill="currentColor" /> 4.5
@@ -922,70 +958,84 @@ submitOrder = async () => {
             </div>
 
             <div className="flex-1 flex flex-col bg-white rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-[6px] bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px]">■</div>
-                  <div className="px-4 py-3 border-b flex items-center justify-between">
-  {/* KHÁCH HÀNG HIỆN TẠI */}
-  <div className="flex items-center gap-2">
-    <div className="w-8 h-8 rounded-[8px] bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-xs font-bold">
-      KH
-    </div>
+              {/* === THANH KHÁCH HÀNG FULL WIDTH === */}
+<div className="flex items-center gap-3 w-full px-6 py-2 bg-white">
+  {/* Icon KH */}
+  <div className="w-8 h-8 rounded-md bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px] font-bold">
+    KH
+  </div>
+
+  {/* Thông tin KH */}
+  <div className="flex items-center gap-2 flex-1 min-w-0">
     {this.state.foundCustomer ? (
-      <div>
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-[#0c5e64]">
+      <div className="flex flex-col leading-tight truncate">
+        <div className="flex items-center gap-1 truncate">
+          <span className="font-semibold text-[#0c5e64] text-sm truncate">
             {this.state.foundCustomer.fullName}
           </span>
           {this.state.foundCustomer.rankName && (
-            <span className="px-2 py-0.5 text-xs rounded-full bg-[#00A8B0]/10 text-[#00A8B0]">
+            <span className="px-2 py-0.5 text-[10px] rounded-full bg-[#00A8B0]/10 text-[#00A8B0] font-medium whitespace-nowrap">
               {this.state.foundCustomer.rankName}
             </span>
           )}
-          {this.state.foundCustomer.nfcCode && (
-            <span className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-              <Star className="w-3 h-3" /> NFC
-            </span>
-          )}
         </div>
-        <p className="text-xs text-gray-500">
-          📞 {this.state.foundCustomer.phone}
-        </p>
+        <span className="text-[11px] text-gray-500 truncate flex items-center gap-1">
+          <span className="text-pink-500 text-xs">📞</span>
+          {this.state.foundCustomer.phone}
+        </span>
       </div>
     ) : (
-      <span className="text-[#0c5e64] font-semibold">Khách lẻ</span>
+      <span className="text-[#0c5e64] font-semibold text-sm">Khách lẻ</span>
     )}
   </div>
 
-  {/* THANH TÌM KIẾM */}
-  <div className="flex items-center gap-3 w-[60%]">
-    <div className="relative flex-1">
+  {/* Ô tìm kiếm + nút bên phải */}
+  <div className="flex items-center gap-2 w-[55%] justify-end">
+    <div className="relative flex-1 min-w-[200px]">
       <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
       <Input
-        placeholder="Nhập SĐT khách hàng..."
-        className="h-9 rounded-full pl-9 pr-4 border-2 border-[#00A8B0] focus-visible:ring-0"
+        placeholder="Nhập SĐT khác"
+        className="h-9 w-full rounded-full pl-9 pr-4 border border-gray-300 focus:border-[#00A8B0] focus-visible:ring-0 text-sm shadow-none"
         value={this.state.customerSearch}
         onChange={(e) => {
           const v = e.target.value;
           this.setState({ customerSearch: v });
           if (v.length >= 5) this.searchCustomerByPhone(v);
+          else this.setState({ customerSuggestions: [] });
         }}
       />
+
+      {/* Dropdown gợi ý khách hàng */}
+      {this.state.customerSuggestions.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-md max-h-48 overflow-y-auto">
+          {this.state.customerSuggestions.map((c) => (
+            <div
+              key={c.customerId}
+              onClick={() => this.handleSelectCustomer(c)}
+              className="px-3 py-2 hover:bg-[#E6FFFA] cursor-pointer text-sm"
+            >
+              <div className="font-semibold text-gray-800">{c.fullName}</div>
+              <div className="text-xs text-gray-500">📞 {c.phone}</div>
+              {c.rankName && (
+                <div className="text-xs text-[#00A8B0]">{c.rankName}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
 
     {this.state.foundCustomer ? (
       <Button
         variant="outline"
-        className="text-red-500 border-red-400"
-        onClick={() =>
-          this.setState({ foundCustomer: null, customerSearch: "" })
-        }
+        className="h-9 px-4 border-red-400 text-red-500 hover:bg-red-50 flex items-center justify-center rounded-full whitespace-nowrap"
+        onClick={this.clearCustomer}
       >
         <X className="w-4 h-4 mr-1" /> Bỏ
       </Button>
     ) : (
       <Button
-        className="bg-[#00A8B0] text-white"
+        className="h-9 px-4 bg-[#00A8B0] text-white rounded-full hover:bg-[#00939a] flex items-center justify-center whitespace-nowrap"
         onClick={() =>
           this.setState({
             showAddCustomer: true,
@@ -1002,8 +1052,6 @@ submitOrder = async () => {
   </div>
 </div>
 
-                </div>
-              </div>
 
               <div className="px-5 py-2 text-sm text-gray-700 font-semibold border-b">
                 <div className="grid grid-cols-[1fr_110px_150px_120px_150px_40px]">

@@ -10,11 +10,13 @@ import { Search, Plus, Edit, Trash2, X } from "lucide-react";
 
 /* ---------- Helper ---------- */
 const fmtDate = (s) =>
-  new Date(s).toLocaleDateString("vi-VN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
+  s
+    ? new Date(s).toLocaleDateString("vi-VN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+    : "—";
 
 class CategoryPageClass extends React.Component {
   state = {
@@ -26,6 +28,7 @@ class CategoryPageClass extends React.Component {
     showModal: false,
     editing: null,
     formName: "",
+    formDesc: "",
   };
 
   mounted = false;
@@ -35,6 +38,7 @@ class CategoryPageClass extends React.Component {
     this.mounted = true;
     this.initShop();
   }
+
   componentWillUnmount() {
     this.mounted = false;
   }
@@ -106,19 +110,20 @@ class CategoryPageClass extends React.Component {
 
   /* ---------- CRUD ---------- */
   handleOpenAdd = () =>
-    this.setState({ showModal: true, editing: null, formName: "" });
+    this.setState({ showModal: true, editing: null, formName: "", formDesc: "" });
 
   handleOpenEdit = (item) =>
     this.setState({
       showModal: true,
       editing: item,
-      formName: item.categoryName,
+      formName: item.categoryName || "",
+      formDesc: item.description || "",
     });
 
   handleClose = () => this.setState({ showModal: false });
 
   handleSave = async () => {
-    const { formName, editing, shopId } = this.state;
+    const { formName, formDesc, editing, shopId } = this.state;
     if (!formName.trim()) return alert("Vui lòng nhập tên danh mục");
 
     const token = localStorage.getItem("accessToken");
@@ -129,6 +134,7 @@ class CategoryPageClass extends React.Component {
 
     const payload = {
       categoryName: formName.trim(),
+      description: formDesc.trim(),
       shopId,
       status: 1,
     };
@@ -194,6 +200,7 @@ class CategoryPageClass extends React.Component {
       error,
       showModal,
       formName,
+      formDesc,
       editing,
     } = this.state;
     const filtered = this.getFiltered();
@@ -241,17 +248,27 @@ class CategoryPageClass extends React.Component {
               {filtered.map((cat) => (
                 <Card
                   key={cat.categoryId}
-                  className="p-6 bg-white rounded-2xl shadow-sm hover:shadow-md transition-all border"
+                  className="relative p-6 bg-white rounded-2xl shadow-md hover:shadow-lg transition-all border border-gray-100"
                 >
+                  {/* Header */}
                   <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-xl text-[#007E85]">
-                      {cat.categoryName}
-                    </h3>
+                    <div className="flex flex-col">
+                      <h3 className="font-bold text-xl text-[#007E85]">
+                        {cat.categoryName}
+                      </h3>
+                      {cat.description && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+                          {cat.description}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Action buttons */}
                     <div className="flex gap-2">
                       <Button
                         variant="outline"
                         size="icon"
-                        className="w-9 h-9"
+                        className="w-9 h-9 border-gray-300 hover:bg-[#E0F7FA]"
                         onClick={() => this.handleOpenEdit(cat)}
                       >
                         <Edit className="w-4 h-4 text-[#007E85]" />
@@ -259,17 +276,36 @@ class CategoryPageClass extends React.Component {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="w-9 h-9"
+                        className="w-9 h-9 border-gray-300 hover:bg-red-50"
                         onClick={() => this.handleDelete(cat)}
                       >
                         <Trash2 className="w-4 h-4 text-red-500" />
                       </Button>
                     </div>
                   </div>
-                  <p className="text-sm text-gray-500">ID: {cat.categoryId}</p>
-                  <p className="text-sm text-gray-500">
-                    Ngày tạo: {fmtDate(cat.createdAt || new Date())}
-                  </p>
+
+                  {/* Info */}
+                  <div className="mt-2 space-y-1 text-sm text-gray-600">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Mã danh mục:</span>
+                      <span className="font-semibold text-gray-800">
+                        #{cat.categoryId}
+                      </span>
+                    </div>
+                    {/* <div className="flex justify-between">
+                      <span className="text-gray-500">Trạng thái:</span>
+                      <span
+                        className={`font-semibold ${
+                          cat.status === 1 ? "text-gray-600" : "text-green-400"
+                        }`}
+                      >
+                        {cat.status === 1 ? "Ngưng" : "Đang hoạt động"}
+                      </span>
+                    </div> */}
+                  </div>
+
+                  {/* Decorative footer */}
+                  <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-[#00A8B0] to-[#00C1A0] rounded-b-2xl"></div>
                 </Card>
               ))}
             </div>
@@ -301,6 +337,19 @@ class CategoryPageClass extends React.Component {
                         this.setState({ formName: e.target.value })
                       }
                       placeholder="Nhập tên danh mục"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Mô tả
+                    </label>
+                    <Input
+                      value={formDesc}
+                      onChange={(e) =>
+                        this.setState({ formDesc: e.target.value })
+                      }
+                      placeholder="Nhập mô tả"
                     />
                   </div>
                 </div>
