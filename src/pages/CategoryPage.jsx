@@ -6,29 +6,34 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Sidebar from "@/components/sidebar";
 import API_URL from "@/config/api";
-import { Search, Plus, Edit, Trash2, X } from "lucide-react";
+import { Search, Plus, Edit, Trash2, X, Eye } from "lucide-react";
 
 /* ---------- Helper ---------- */
 const fmtDate = (s) =>
-  s
-    ? new Date(s).toLocaleDateString("vi-VN", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      })
-    : "—";
+  new Date(s).toLocaleDateString("vi-VN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+const fmt = new Intl.NumberFormat("vi-VN");
 
 class CategoryPageClass extends React.Component {
   state = {
     shopId: null,
     categories: [],
+    productCounts: {}, // ✅ Đếm số sản phẩm theo categoryId
+    productsByCat: {}, // ✅ Lưu danh sách sản phẩm theo danh mục
+
     search: "",
     loading: false,
     error: "",
     showModal: false,
     editing: null,
     formName: "",
-    formDesc: "",
+
+    showProductsModal: false, // ✅ Modal xem sản phẩm
+    currentCategory: null,
   };
 
   mounted = false;
@@ -38,7 +43,6 @@ class CategoryPageClass extends React.Component {
     this.mounted = true;
     this.initShop();
   }
-
   componentWillUnmount() {
     this.mounted = false;
   }
@@ -60,7 +64,10 @@ class CategoryPageClass extends React.Component {
     const shopId = Number(profile?.shopId || 0);
     if (!shopId) return;
 
-    this.setState({ shopId }, () => this.fetchCategories());
+    this.setState({ shopId }, () => {
+      this.fetchCategories();
+      this.fetchProductCounts();
+    });
   };
 
   /* ---------- API ---------- */
@@ -108,22 +115,81 @@ class CategoryPageClass extends React.Component {
     }
   };
 
+fetchProductCounts = async () => {
+  const { shopId } = this.state;
+  if (!shopId) return;
+  const token = localStorage.getItem("accessToken");
+
+  try {
+    const url = `${API_URL}/api/products?ShopId=${shopId}&page=1&pageSize=5000`;
+    const res = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      mode: "cors",
+    });
+    const data = await this.safeParse(res);
+    if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+    const items = Array.isArray(data.items) ? data.items : [];
+
+    const filtered = items.filter(
+      (p) => Number(p.shopId) === Number(shopId) && Number(p.status) === 1
+    );
+
+    const counts = {};
+    filtered.forEach((p) => {
+      const cid = Number(p.categoryId) || 0;
+      if (!counts[cid]) counts[cid] = 0;
+      counts[cid]++;
+    });
+
+    this.setState({ productCounts: counts });
+  } catch (e) {
+    console.error("fetchProductCounts error:", e);
+  }
+};
+
+
+  fetchProductsByCategory = async (cat) => {
+    const { shopId } = this.state;
+    const token = localStorage.getItem("accessToken");
+    try {
+      const url = `${API_URL}/api/products?ShopId=${shopId}&CategoryId=${cat.categoryId}`;
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await this.safeParse(res);
+      const items = Array.isArray(data.items) ? data.items : [];
+      this.setState({
+        productsByCat: { ...this.state.productsByCat, [cat.categoryId]: items },
+        currentCategory: cat,
+        showProductsModal: true,
+      });
+    } catch (e) {
+      alert("Lỗi tải sản phẩm: " + e.message);
+    }
+  };
+
   /* ---------- CRUD ---------- */
   handleOpenAdd = () =>
-    this.setState({ showModal: true, editing: null, formName: "", formDesc: "" });
+    this.setState({ showModal: true, editing: null, formName: "" });
 
   handleOpenEdit = (item) =>
     this.setState({
       showModal: true,
       editing: item,
-      formName: item.categoryName || "",
-      formDesc: item.description || "",
+      formName: item.categoryName,
     });
 
   handleClose = () => this.setState({ showModal: false });
 
   handleSave = async () => {
-    const { formName, formDesc, editing, shopId } = this.state;
+    const { formName, editing, shopId } = this.state;
     if (!formName.trim()) return alert("Vui lòng nhập tên danh mục");
 
     const token = localStorage.getItem("accessToken");
@@ -134,7 +200,6 @@ class CategoryPageClass extends React.Component {
 
     const payload = {
       categoryName: formName.trim(),
-      description: formDesc.trim(),
       shopId,
       status: 1,
     };
@@ -200,10 +265,15 @@ class CategoryPageClass extends React.Component {
       error,
       showModal,
       formName,
-      formDesc,
       editing,
+      productCounts,
+      showProductsModal,
+      currentCategory,
+      productsByCat,
     } = this.state;
+
     const filtered = this.getFiltered();
+    const products = currentCategory ? productsByCat[currentCategory.categoryId] || [] : [];
 
     return (
       <div className="flex h-screen w-screen overflow-hidden">
@@ -248,27 +318,25 @@ class CategoryPageClass extends React.Component {
               {filtered.map((cat) => (
                 <Card
                   key={cat.categoryId}
-                  className="relative p-6 bg-white rounded-2xl shadow-md hover:shadow-lg transition-all border border-gray-100"
+                  className="p-6 bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all border"
                 >
-                  {/* Header */}
                   <div className="flex justify-between items-start mb-3">
-                    <div className="flex flex-col">
-                      <h3 className="font-bold text-xl text-[#007E85]">
-                        {cat.categoryName}
-                      </h3>
-                      {cat.description && (
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                          {cat.description}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Action buttons */}
+                    <h3 className="font-bold text-xl text-[#007E85] flex items-center gap-2">
+                      {cat.categoryName}
+                    </h3>
                     <div className="flex gap-2">
                       <Button
                         variant="outline"
                         size="icon"
-                        className="w-9 h-9 border-gray-300 hover:bg-[#E0F7FA]"
+                        className="w-9 h-9"
+                        onClick={() => this.fetchProductsByCategory(cat)}
+                      >
+                        <Eye className="w-4 h-4 text-[#007E85]" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="w-9 h-9"
                         onClick={() => this.handleOpenEdit(cat)}
                       >
                         <Edit className="w-4 h-4 text-[#007E85]" />
@@ -276,36 +344,15 @@ class CategoryPageClass extends React.Component {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="w-9 h-9 border-gray-300 hover:bg-red-50"
+                        className="w-9 h-9"
                         onClick={() => this.handleDelete(cat)}
                       >
                         <Trash2 className="w-4 h-4 text-red-500" />
                       </Button>
                     </div>
                   </div>
-
-                  {/* Info */}
-                  <div className="mt-2 space-y-1 text-sm text-gray-600">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Mã danh mục:</span>
-                      <span className="font-semibold text-gray-800">
-                        #{cat.categoryId}
-                      </span>
-                    </div>
-                    {/* <div className="flex justify-between">
-                      <span className="text-gray-500">Trạng thái:</span>
-                      <span
-                        className={`font-semibold ${
-                          cat.status === 1 ? "text-gray-600" : "text-green-400"
-                        }`}
-                      >
-                        {cat.status === 1 ? "Ngưng" : "Đang hoạt động"}
-                      </span>
-                    </div> */}
-                  </div>
-
-                  {/* Decorative footer */}
-                  <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-[#00A8B0] to-[#00C1A0] rounded-b-2xl"></div>
+                  <p className="text-sm text-gray-500">ID: {cat.categoryId}</p>
+                  <p className="text-sm text-black-500">{productCounts[cat.categoryId]} sản phẩm</p>
                 </Card>
               ))}
             </div>
@@ -314,7 +361,7 @@ class CategoryPageClass extends React.Component {
           {/* Modal thêm/sửa danh mục */}
           {showModal && (
             <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] flex items-center justify-center">
-              <div className="bg-white w-[500px] rounded-2xl shadow-2xl p-8 relative animate-in fade-in-0 zoom-in-95">
+              <div className="bg-white w-[500px] rounded-2xl shadow-2xl p-8 relative">
                 <button
                   onClick={this.handleClose}
                   className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
@@ -339,19 +386,6 @@ class CategoryPageClass extends React.Component {
                       placeholder="Nhập tên danh mục"
                     />
                   </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1">
-                      Mô tả
-                    </label>
-                    <Input
-                      value={formDesc}
-                      onChange={(e) =>
-                        this.setState({ formDesc: e.target.value })
-                      }
-                      placeholder="Nhập mô tả"
-                    />
-                  </div>
                 </div>
 
                 <div className="mt-6 flex justify-end gap-3">
@@ -365,6 +399,66 @@ class CategoryPageClass extends React.Component {
                     Lưu
                   </Button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Modal danh sách sản phẩm */}
+          {showProductsModal && currentCategory && (
+            <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+              <div className="bg-white w-[800px] max-h-[80vh] rounded-2xl shadow-2xl p-6 overflow-y-auto relative">
+                <button
+                  onClick={() =>
+                    this.setState({ showProductsModal: false, currentCategory: null })
+                  }
+                  className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+
+                <h2 className="text-2xl font-bold text-[#007E85] mb-4">
+                  {currentCategory.categoryName} ({products.length} sản phẩm)
+                </h2>
+
+                {products.length === 0 ? (
+                  <p className="text-gray-500 text-center py-10">
+                    Chưa có sản phẩm trong danh mục này
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    {products.map((p) => (
+                      <Card key={p.productId} className="p-4 border rounded-xl">
+                        <div className="flex gap-4">
+                          <img
+                            src={p.productImageURL || "https://via.placeholder.com/100"}
+                            alt={p.productName}
+                            className="w-20 h-20 object-cover rounded-lg"
+                            onError={(e) =>
+                              (e.currentTarget.src = "https://via.placeholder.com/100")
+                            }
+                          />
+                          <div className="flex-1">
+                            <h3 className="font-semibold text-[#007E85] line-clamp-2">
+                              {p.productName}
+                            </h3>
+                            <p className="text-orange-600 font-bold">
+                              {fmt.format(p.price)}đ
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              Barcode: {p.barcode || "—"}
+                            </p>
+                            <p className="text-xs text-gray-400">
+                              Trạng thái:{" "}
+                              <span className={p.status === 1 ? "text-green-500" : "text-red-500"}>
+                                {p.status === 1 ? "Đang bán" : "Ngừng bán"}
+                              </span>
+                            </p>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

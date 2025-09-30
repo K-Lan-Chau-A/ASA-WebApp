@@ -366,7 +366,7 @@ logCartMap = (orders = [], orderDetails = []) => {
             unit: base ? base.unitName : "—",
             productUnitId: base ? base.productUnitId : undefined,
             unitOptions: unitRows,
-            img: p.imageUrl || "https://via.placeholder.com/150",
+            img: p.productImageURL || "https://via.placeholder.com/150",
           };
         });
 
@@ -850,10 +850,6 @@ submitOrder = async () => {
                             list.map((p) => (
                               <Card key={`${c.id}-${p.id}`} className="relative overflow-hidden">
                                 <CardContent className="p-2 flex flex-col items-center text-center">
-                                  <button className="absolute top-2 right-2 text-gray-500 hover:text-red-500">
-                                    <Heart size={18} />
-                                  </button>
-
                                   <img
                                     src={p.img}
                                     alt={p.name}
