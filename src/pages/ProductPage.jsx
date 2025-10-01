@@ -44,7 +44,6 @@ class ProductPageClass extends React.Component {
     showAddModal: false,
     showUnitModal: false,
 
-    // ⚡ Form thêm sản phẩm
     productName: "",
     barcode: "",
     cost: "",
@@ -53,7 +52,7 @@ class ProductPageClass extends React.Component {
     categoryId: "",
     quantity: "",
     imageUrl: "",
-    units: [], // { id, isBase, name, conversion, price }
+    units: [],
   };
 
   mounted = false;
@@ -112,13 +111,14 @@ class ProductPageClass extends React.Component {
   };
 
   /* ---------- FETCH CATEGORIES ---------- */
+
   fetchCategories = async () => {
     if (!this.state.shopId) return;
     const token = localStorage.getItem("accessToken");
     this.setState({ loading: true, catError: "" });
 
     try {
-      const url = `${API_URL}/api/products?page=1&pageSize=500`;
+      const url = `${API_URL}/api/categories?ShopId=${this.state.shopId}`;
       const res = await fetch(url, {
         headers: {
           accept: "application/json",
@@ -130,23 +130,14 @@ class ProductPageClass extends React.Component {
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
       const items = Array.isArray(data.items) ? data.items : [];
-      const byShop = items
-        .filter((p) => Number(p.shopId) === Number(this.state.shopId))
-        .filter((p) => Number(p.status) === 1);
-
-      const map = new Map();
-      for (const p of byShop) {
-        const id = p.categoryId;
-        const name = p.categoryName || `Danh mục ${id}`;
-        if (!map.has(id))
-          map.set(id, { id, name, value: `${id}-${slugify(name)}` });
-      }
-
       const withAll = [
         { id: "all", name: "Tất cả", value: "all" },
-        ...Array.from(map.values()),
+        ...items.map((c) => ({
+          id: c.categoryId,
+          name: c.categoryName,
+          value: `${c.categoryId}-${slugify(c.categoryName)}`,
+        })),
       ];
-
       if (!this.mounted) return;
       this.setState({ categories: withAll, activeTab: "all" });
     } catch (e) {
@@ -239,7 +230,9 @@ class ProductPageClass extends React.Component {
       const filtered = raw
         .filter((p) => Number(p.shopId) === Number(this.state.shopId))
         .filter((p) => Number(p.status) === 1)
-        .filter((p) => (categoryId ? Number(p.categoryId) === categoryId : true))
+        .filter((p) =>
+          categoryId ? Number(p.categoryId) === categoryId : true
+        )
         .map((p) => {
           const pid = Number(p.productId);
           const unitRows = this.state.unitsByPid[pid] || [];
@@ -249,11 +242,8 @@ class ProductPageClass extends React.Component {
             name: p.productName,
             category: p.categoryName,
             stock: p.quantity ?? 0,
-            price: base ? base.price : p.price ?? 0,
-            img:
-  p.productImageURL ||
-  p.imageUrl ||
-  "/no-image.png",
+            price: base ? base.price : (p.price ?? 0),
+            img: p.productImageURL || p.imageUrl || "/no-image.png",
 
             unitOptions: unitRows,
           };
@@ -280,156 +270,214 @@ class ProductPageClass extends React.Component {
 
   /* ---------- HANDLERS ---------- */
   toggleFilter = () => this.setState((s) => ({ showFilter: !s.showFilter }));
-  toggleAddModal = () => this.setState((s) => ({ showAddModal: !s.showAddModal }));
-  toggleUnitModal = () => this.setState((s) => ({ showUnitModal: !s.showUnitModal }));
+  toggleAddModal = () =>
+    this.setState((s) => ({ showAddModal: !s.showAddModal }));
+  toggleUnitModal = () =>
+    this.setState((s) => ({ showUnitModal: !s.showUnitModal }));
   setActiveTab = (v) => this.setState({ activeTab: v });
   setSearch = (v) => this.setState({ search: v });
 
   /* ---------- Unit Handlers ---------- */
+  handleConfirmUnits = () => {
+    const validUnits = (this.state.units || []).filter(
+      (u) =>
+        u.name?.trim() && // có tên
+        (u.isBase || Number(u.conversion) > 0) // nếu không phải cơ bản thì cần conversion > 0
+    );
+
+    // Nếu không có đơn vị cơ bản nào, tự động chọn đơn vị đầu tiên làm cơ bản
+    if (!validUnits.some((u) => u.isBase) && validUnits.length > 0) {
+      validUnits[0].isBase = true;
+      validUnits[0].conversion = 1;
+    }
+
+    this.setState({ units: validUnits, showUnitModal: false });
+  };
+
   handleImageUpload = (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
+    const file = event.target.files[0];
+    if (!file) return;
+    this.setState({
+      imageFile: file,
+      imageUrl: URL.createObjectURL(file),
+    });
+  };
 
-  this.setState({
-    imageFile: file, // lưu file thật
-    imageUrl: URL.createObjectURL(file), // preview
-  });
-};
-
-
-handleAddUnit = () => {
-  this.setState((prev) => ({
-    units: [
-      ...prev.units,
-      { id: Date.now(), isBase: false, name: "", conversion: 1, price: "" },
-    ],
-  }));
-};
-
-handleRemoveUnit = (idx) => {
-  this.setState((prev) => {
-    const newUnits = [...prev.units];
-    newUnits.splice(idx, 1);
-    return { units: newUnits };
-  });
-};
-
-handleChangeUnit = (idx, key, value) => {
-  this.setState((prev) => {
-    const newUnits = [...prev.units];
-    newUnits[idx][key] = value;
-    return { units: newUnits };
-  });
-};
-
-handleSetBaseUnit = (idx, checked) => {
-  this.setState((prev) => {
-    const newUnits = prev.units.map((u, i) => ({
-      ...u,
-      isBase: i === idx ? checked : false,
-      conversion: i === idx ? 1 : u.conversion,
+  handleAddUnit = () => {
+    this.setState((prev) => ({
+      units: [
+        ...prev.units,
+        { id: Date.now(), isBase: false, name: "", conversion: 1, price: "" },
+      ],
     }));
-    return { units: newUnits };
-  });
-};
+  };
+
+  handleRemoveUnit = (idx) => {
+    this.setState((prev) => {
+      const newUnits = [...prev.units];
+      newUnits.splice(idx, 1);
+      return { units: newUnits };
+    });
+  };
+
+  handleChangeUnit = (idx, key, value) => {
+    this.setState((prev) => {
+      const newUnits = [...prev.units];
+      newUnits[idx][key] = value;
+      return { units: newUnits };
+    });
+  };
+
+  handleSetBaseUnit = (idx, checked) => {
+    this.setState((prev) => {
+      const newUnits = prev.units.map((u, i) => ({
+        ...u,
+        isBase: i === idx ? checked : false,
+        conversion: i === idx ? 1 : u.conversion,
+      }));
+      return { units: newUnits };
+    });
+  };
 
   /* ---------- Lưu sản phẩm ---------- */
   handleSaveProduct = async () => {
-  const token = localStorage.getItem("accessToken");
-  const { shopId, units, categoryId, isLow, imageUrl, quantity } = this.state;
-
-  // Lấy dữ liệu từ form state (không dùng querySelector)
-  const { productName, barcode, cost, price } = this.state;
-
-  // Kiểm tra dữ liệu bắt buộc
-  if (!productName || !categoryId || !price) {
-    alert("⚠️ Vui lòng nhập đầy đủ thông tin bắt buộc");
-    return;
-  }
-
-  try {
-    /* 1️⃣ Tạo sản phẩm */
-    const productPayload = {
-      productName,
-      quantity: Number(quantity || 0),
-      cost: Number(cost || 0),
-      price: Number(price || 0),
-      promotionPrice: 0,
-      productImageURL: imageUrl || "",
-      barcode,
-      discount: 0,
-      isLow,
-      status: 1,
+    const token = localStorage.getItem("accessToken");
+    const {
       shopId,
-      categoryId: Number(categoryId),
-      categoryName: "",
-      unitIdFk: 0,
-    };
+      units,
+      categoryId,
+      productName,
+      barcode,
+      cost,
+      price,
+      quantity,
+    } = this.state;
 
-    console.log("📦 Gửi sản phẩm:", productPayload);
-
-    const resProd = await fetch(`${API_URL}/api/products`, {
-      method: "POST",
-      headers: {
-        accept: "text/plain",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(productPayload),
-    });
-
-    const prodData = await this.safeParse(resProd);
-    if (!resProd.ok) throw new Error(prodData?.message || "Lỗi tạo sản phẩm");
-
-    const productId = prodData.productId;
-    console.log("✅ Tạo sản phẩm thành công:", prodData);
-
-    /* 2️⃣ Gọi API tạo đơn vị quy đổi */
-    for (const u of units) {
-      const unitPayload = {
-        shopId,
-        productId,
-        unitId: 0,
-        unitName: u.name,
-        conversionFactor: Number(u.conversion || 1), // ✅ FIX đúng field
-        price: Number(u.price || 0),
-      };
-
-      console.log("📏 Gửi đơn vị:", unitPayload);
-
-      const resUnit = await fetch(`${API_URL}/api/product-units`, {
-        method: "POST",
-        headers: {
-          accept: "text/plain",
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(unitPayload),
-      });
-
-      const unitData = await this.safeParse(resUnit);
-      if (!resUnit.ok) {
-        console.error("⚠️ Lỗi tạo đơn vị:", u.name, unitData);
-      } else {
-        console.log("✅ Đã thêm đơn vị:", unitData);
-      }
+    // ✅ Kiểm tra bắt buộc
+    if (!productName || !categoryId || !price) {
+      alert("⚠️ Vui lòng nhập đầy đủ thông tin bắt buộc");
+      return;
     }
 
-    alert("🎉 Thêm sản phẩm và đơn vị thành công!");
-    this.toggleAddModal();
-    this.ensureProducts(this.state.activeTab, true); // reload danh sách
-  } catch (err) {
-    console.error(err);
-    alert("❌ Thêm sản phẩm thất bại: " + err.message);
-  }
-};
+    try {
+      // 1️⃣ Tạo sản phẩm
+      const formData = new FormData();
+      formData.append("ShopId", shopId);
+      formData.append("ProductName", productName.trim());
+      formData.append("Barcode", barcode || null);
+      formData.append("CategoryId", Number(categoryId));
+      formData.append("Price", Number(price));
+      formData.append("Discount", 0);
+      formData.append("Status", 1);
+      // 🧩 Đơn vị: gộp thành UnitsJson (chuẩn Mobile)
+      const baseUnitName = (this.state.baseUnit || "Cái").trim();
+      const unitsPayload = [
+        {
+          name: baseUnitName,
+          conversionFactor: 1,
+          price: sellPrice,
+          isBaseUnit: true,
+        },
+        ...this.state.units
+          .filter((u) => u.name?.trim() && Number(u.conversion) > 0)
+          .map((u) => ({
+            name: u.name.trim(),
+            conversionFactor: Number(u.conversion),
+            price: Number(u.price || sellPrice * u.conversion),
+            isBaseUnit: false,
+          })),
+      ];
+      formData.append("UnitsJson", JSON.stringify(unitsPayload));
 
+      // 🧩 Giao dịch nhập kho (chỉ khi thêm mới)
+      if (!isEditing) {
+        const quantity = Number(this.state.quantity || 0);
+        const totalImportPrice = Number(this.state.totalImportPrice || 0);
+        formData.append("InventoryTransaction.Quantity", String(quantity));
+        formData.append("InventoryTransaction.Price", String(totalImportPrice));
+      }
 
+      // 🧩 Ảnh sản phẩm
+      if (this.state.productImage) {
+        const file = this.state.productImage;
+        formData.append("ProductImageFile", file);
+      }
+
+      // 🧩 Ảnh hóa đơn nhập (nếu có)
+      if (!isEditing && this.state.invoiceFile) {
+        formData.append(
+          "InventoryTransaction.InventoryTransImageFile",
+          this.state.invoiceFile
+        );
+      }
+
+      // 🔹 Gửi API tạo sản phẩm
+      const resProd = await fetch(`${API_URL}/api/products`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      const prodData = await this.safeParse(resProd);
+      if (!resProd.ok) throw new Error(prodData?.message || "Lỗi tạo sản phẩm");
+
+      const newProductId = prodData.productId || prodData.id;
+      console.log("✅ Product created:", newProductId);
+
+      // 2️⃣ Sau khi có productId → Gửi API thêm các đơn vị
+      if (units.length > 0 && newProductId) {
+        const validUnits = units.filter(
+          (u) => u.name?.trim() && (u.isBase || Number(u.conversion) > 0)
+        );
+
+        for (const u of validUnits) {
+          const payload = {
+            shopId,
+            unitId: u.unitId || 0,
+            conversionFactor: Number(u.conversion || 1),
+            price: Number(u.price || 0),
+            productId: newProductId,
+          };
+
+          const resUnit = await fetch(`${API_URL}/api/product-units`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+
+          const unitData = await this.safeParse(resUnit);
+          if (!resUnit.ok)
+            console.warn(
+              "⚠️ Lỗi thêm đơn vị:",
+              unitData?.message || resUnit.status
+            );
+        }
+      }
+
+      alert("🎉 Thêm sản phẩm và đơn vị thành công!");
+      this.toggleAddModal();
+      this.ensureProducts(this.state.activeTab, true);
+    } catch (err) {
+      console.error(err);
+      alert("❌ Thêm sản phẩm thất bại: " + err.message);
+    }
+  };
 
   /* ---------- UI - Modal thêm sản phẩm ---------- */
   renderAddModal() {
-    const { categories, categoryId, productName, barcode, cost, price, isLow, quantity } =
-      this.state;
+    const {
+      categories,
+      categoryId,
+      productName,
+      barcode,
+      cost,
+      price,
+      isLow,
+      quantity,
+    } = this.state;
     return (
       <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
         <div className="bg-white w-[1100px] h-[90vh] shadow-2xl rounded-2xl p-10 overflow-y-auto relative">
@@ -447,35 +495,34 @@ handleSetBaseUnit = (idx, checked) => {
             {/* LEFT */}
             <div className="space-y-6">
               <div className="flex flex-col items-center">
-  <label
-    htmlFor="imageUpload"
-    className="w-[140px] h-[140px] rounded-xl border-2 border-dashed border-[#00A8B0] bg-[#E1FBFF] grid place-items-center text-[#00A8B0] font-semibold text-sm cursor-pointer hover:bg-[#D5F7F9] transition overflow-hidden"
-  >
-    {this.state.imageUrl ? (
-      <img
-        src={this.state.imageUrl}
-        alt="Preview"
-        className="w-full h-full object-cover"
-      />
-    ) : (
-      <>
-        <Upload className="w-6 h-6 mb-1" />
-        ẢNH
-      </>
-    )}
-  </label>
-  <input
-    id="imageUpload"
-    type="file"
-    accept="image/*"
-    className="hidden"
-    onChange={this.handleImageUpload}
-  />
-  <p className="text-sm text-gray-500 mt-2 text-center">
-    Nhấn để tải ảnh lên
-  </p>
-</div>
-
+                <label
+                  htmlFor="imageUpload"
+                  className="w-[140px] h-[140px] rounded-xl border-2 border-dashed border-[#00A8B0] bg-[#E1FBFF] grid place-items-center text-[#00A8B0] font-semibold text-sm cursor-pointer hover:bg-[#D5F7F9] transition overflow-hidden"
+                >
+                  {this.state.imageUrl ? (
+                    <img
+                      src={this.state.imageUrl}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <>
+                      <Upload className="w-6 h-6 mb-1" />
+                      ẢNH
+                    </>
+                  )}
+                </label>
+                <input
+                  id="imageUpload"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={this.handleImageUpload}
+                />
+                <p className="text-sm text-gray-500 mt-2 text-center">
+                  Nhấn để tải ảnh lên
+                </p>
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -507,7 +554,9 @@ handleSetBaseUnit = (idx, checked) => {
                 <select
                   className="border rounded-md px-3 py-2 w-full"
                   value={categoryId}
-                  onChange={(e) => this.setState({ categoryId: e.target.value })}
+                  onChange={(e) =>
+                    this.setState({ categoryId: Number(e.target.value) })
+                  }
                 >
                   <option value="">-- Chọn danh mục --</option>
                   {categories
@@ -588,7 +637,7 @@ handleSetBaseUnit = (idx, checked) => {
               <h3 className="font-bold text-lg text-gray-800 mb-2">
                 Thông tin chi tiết
               </h3>
-                <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
+              <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
                     🧋
@@ -608,56 +657,57 @@ handleSetBaseUnit = (idx, checked) => {
                 />
               </div>
               <div className="border rounded-lg p-4">
-  <div className="flex items-center justify-between mb-3">
-    <div>
-      <p className="font-semibold">Đơn vị</p>
-      <p className="text-sm text-gray-500">
-        Thiết lập các đơn vị quy đổi
-      </p>
-    </div>
-    <Button
-      variant="outline"
-      className="rounded-lg px-4 py-2 text-sm"
-      onClick={this.toggleUnitModal}
-    >
-      Cấu hình
-    </Button>
-  </div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="font-semibold">Đơn vị</p>
+                    <p className="text-sm text-gray-500">
+                      Thiết lập các đơn vị quy đổi
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="rounded-lg px-4 py-2 text-sm"
+                    onClick={this.toggleUnitModal}
+                  >
+                    Cấu hình
+                  </Button>
+                </div>
 
-  {/* ✅ Danh sách đơn vị hiển thị sau khi cấu hình */}
-  <div className="space-y-2">
-    {this.state.units.length === 0 ? (
-      <p className="text-gray-400 text-sm">Chưa có đơn vị</p>
-    ) : (
-      this.state.units.map((u, idx) => (
-        <div
-          key={u.id}
-          className="flex justify-between items-center bg-white border rounded-lg px-3 py-2"
-        >
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-700">{u.name || "—"}</span>
-            {u.isBase && (
-              <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
-                cơ bản
-              </span>
-            )}
-            {!u.isBase && (
-              <span className="text-xs text-gray-500">
-                x{u.conversion || 1}
-              </span>
-            )}
-          </div>
-          {!u.isBase && (
-            <span className="text-sm text-[#00A8B0] font-semibold">
-              + {u.price ? fmt.format(u.price) : 0}đ
-            </span>
-          )}
-        </div>
-      ))
-    )}
-  </div>
-</div>
-
+                {/* ✅ Danh sách đơn vị hiển thị sau khi cấu hình */}
+                <div className="space-y-2">
+                  {this.state.units.length === 0 ? (
+                    <p className="text-gray-400 text-sm">Chưa có đơn vị</p>
+                  ) : (
+                    this.state.units.map((u, idx) => (
+                      <div
+                        key={u.id}
+                        className="flex justify-between items-center bg-white border rounded-lg px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-gray-700">
+                            {u.name || "—"}
+                          </span>
+                          {u.isBase && (
+                            <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
+                              cơ bản
+                            </span>
+                          )}
+                          {!u.isBase && (
+                            <span className="text-xs text-gray-500">
+                              x{u.conversion || 1}
+                            </span>
+                          )}
+                        </div>
+                        {!u.isBase && (
+                          <span className="text-sm text-[#00A8B0] font-semibold">
+                            + {u.price ? fmt.format(u.price) : 0}đ
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -681,121 +731,129 @@ handleSetBaseUnit = (idx, checked) => {
     );
   }
   /* ---------- Unit Modal ---------- */
-renderUnitModal() {
-  const { units } = this.state;
+  renderUnitModal() {
+    const { units } = this.state;
 
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
-      <div className="bg-white w-[600px] rounded-2xl shadow-2xl p-8 relative">
-        <button
-          onClick={this.toggleUnitModal}
-          className="absolute top-5 right-5 text-gray-500 hover:text-gray-800"
-        >
-          <X className="w-6 h-6" />
-        </button>
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
+        <div className="bg-white w-[600px] rounded-2xl shadow-2xl p-8 relative">
+          <button
+            onClick={this.toggleUnitModal}
+            className="absolute top-5 right-5 text-gray-500 hover:text-gray-800"
+          >
+            <X className="w-6 h-6" />
+          </button>
 
-        <h2 className="text-2xl font-extrabold text-[#007E85] mb-6">
-          CẤU HÌNH ĐƠN VỊ
-        </h2>
+          <h2 className="text-2xl font-extrabold text-[#007E85] mb-6">
+            CẤU HÌNH ĐƠN VỊ
+          </h2>
 
-        {/* Danh sách đơn vị */}
-        <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
-          {units.map((u, idx) => (
-            <div
-              key={u.id}
-              className="border border-gray-200 rounded-xl p-4 space-y-3 relative"
-            >
-              {idx > 0 && (
-                <button
-                  className="absolute top-2 right-2 text-red-500 hover:text-red-700"
-                  onClick={() => this.handleRemoveUnit(idx)}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
+          {/* Danh sách đơn vị */}
+          <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+            {units.map((u, idx) => (
+              <div
+                key={u.id}
+                className="border border-gray-200 rounded-xl p-4 space-y-3 relative"
+              >
+                {idx > 0 && (
+                  <button
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    onClick={() => this.handleRemoveUnit(idx)}
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
 
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={u.isBase}
-                  onChange={(e) => this.handleSetBaseUnit(idx, e.target.checked)}
-                />
-                <label className="font-semibold text-gray-800">
-                  Đơn vị cơ bản
-                </label>
-                <Input
-                  placeholder="Vd. chai"
-                  value={u.name}
-                  onChange={(e) => this.handleChangeUnit(idx, "name", e.target.value)}
-                  className="ml-auto w-[150px]"
-                />
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={u.isBase}
+                    onChange={(e) =>
+                      this.handleSetBaseUnit(idx, e.target.checked)
+                    }
+                  />
+                  <label className="font-semibold text-gray-800">
+                    Đơn vị cơ bản
+                  </label>
+                  <Input
+                    placeholder="Vd. chai"
+                    value={u.name}
+                    onChange={(e) =>
+                      this.handleChangeUnit(idx, "name", e.target.value)
+                    }
+                    className="ml-auto w-[150px]"
+                  />
+                </div>
+
+                {!u.isBase && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <label className="font-semibold text-gray-800">
+                        Giá trị quy đổi
+                      </label>
+                      <Input
+                        placeholder="Vd. 6"
+                        type="number"
+                        value={u.conversion}
+                        onChange={(e) =>
+                          this.handleChangeUnit(
+                            idx,
+                            "conversion",
+                            e.target.value
+                          )
+                        }
+                        className="w-[120px]"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="font-semibold text-gray-800">
+                        Giá bán
+                      </label>
+                      <Input
+                        placeholder="Vd. 120000"
+                        type="number"
+                        value={u.price}
+                        onChange={(e) =>
+                          this.handleChangeUnit(idx, "price", e.target.value)
+                        }
+                        className="w-[150px]"
+                      />
+                      <span className="text-gray-500">VND</span>
+                    </div>
+                  </>
+                )}
               </div>
+            ))}
+          </div>
 
-              {!u.isBase && (
-                <>
-                  <div className="flex items-center gap-3">
-                    <label className="font-semibold text-gray-800">
-                      Giá trị quy đổi
-                    </label>
-                    <Input
-                      placeholder="Vd. 6"
-                      type="number"
-                      value={u.conversion}
-                      onChange={(e) =>
-                        this.handleChangeUnit(idx, "conversion", e.target.value)
-                      }
-                      className="w-[120px]"
-                    />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="font-semibold text-gray-800">Giá bán</label>
-                    <Input
-                      placeholder="Vd. 120000"
-                      type="number"
-                      value={u.price}
-                      onChange={(e) =>
-                        this.handleChangeUnit(idx, "price", e.target.value)
-                      }
-                      className="w-[150px]"
-                    />
-                    <span className="text-gray-500">VND</span>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Thêm đơn vị */}
-        <Button
-          variant="outline"
-          className="mt-4 w-full border-[#00A8B0] text-[#00A8B0] hover:bg-[#E1FBFF]"
-          onClick={this.handleAddUnit}
-        >
-          + Thêm đơn vị
-        </Button>
-
-        {/* Nút hành động */}
-        <div className="mt-8 flex justify-end gap-4">
+          {/* Thêm đơn vị */}
           <Button
             variant="outline"
-            className="rounded-lg px-6 py-2 text-gray-600"
-            onClick={this.toggleUnitModal}
+            className="mt-4 w-full border-[#00A8B0] text-[#00A8B0] hover:bg-[#E1FBFF]"
+            onClick={this.handleAddUnit}
           >
-            Hủy
+            + Thêm đơn vị
           </Button>
-          <Button
-            className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
-            onClick={this.toggleUnitModal}
-          >
-            Đồng ý
-          </Button>
+
+          <div className="mt-8 flex justify-end gap-4">
+            <Button
+              variant="outline"
+              className="rounded-lg px-6 py-2 text-gray-600"
+              onClick={this.toggleUnitModal}
+            >
+              Hủy
+            </Button>
+            <Button
+              className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+              onClick={this.handleConfirmUnits}
+            >
+              Đồng ý
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
+    );
+  }
 
   /* ---------- FILTER DATA ---------- */
   getFiltered = (tabValue) => {
@@ -821,9 +879,7 @@ renderUnitModal() {
         <Sidebar />
         <div className="flex-1 bg-gradient-to-r from-[#EAFDFC] via-[#F7E7CE] to-[#E0F7FA] p-10 overflow-y-auto relative">
           <div className="flex items-center justify-between mb-8">
-            <h1 className="text-3xl font-extrabold text-[#007E85]">
-              KHO HÀNG
-            </h1>
+            <h1 className="text-3xl font-extrabold text-[#007E85]">KHO HÀNG</h1>
             <div className="flex items-center space-x-3">
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
@@ -845,7 +901,9 @@ renderUnitModal() {
 
           {!categories.length ? (
             <div className="text-gray-500">
-              {loading ? "Đang tải danh mục..." : catError || "Không có danh mục"}
+              {loading
+                ? "Đang tải danh mục..."
+                : catError || "Không có danh mục"}
             </div>
           ) : (
             <Tabs value={activeTab} onValueChange={this.setActiveTab}>
@@ -920,7 +978,9 @@ renderUnitModal() {
                             <div className="text-center">
                               <p className="text-base text-gray-500">Kho</p>
                               {p.stock > 0 ? (
-                                <p className="font-semibold text-lg">{p.stock}</p>
+                                <p className="font-semibold text-lg">
+                                  {p.stock}
+                                </p>
                               ) : (
                                 <span className="text-red-500 font-bold text-sm bg-red-100 px-3 py-1 rounded">
                                   Hết hàng
