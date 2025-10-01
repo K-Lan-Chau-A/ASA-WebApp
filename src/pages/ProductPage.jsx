@@ -6,22 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import Sidebar from "@/components/sidebar";
 import API_URL from "@/config/api";
-import { Search, Filter, Plus, X, Trash2 } from "lucide-react";
-
-/* ---------- Debug logger ---------- */
-const DEBUG = true;
-const tlog = (ns) => (msg, ...rest) =>
-  DEBUG &&
-  console.log(
-    `%c[${ns}]%c ${msg}`,
-    "color:#00A8B0;font-weight:700",
-    "color:inherit",
-    ...rest
-  );
-const logApp = tlog("APP");
-const logCat = tlog("CATEGORIES");
-const logProd = tlog("PRODUCTS");
-const logUnit = tlog("UNITS");
+import { Search, Filter, Plus, X, Trash2, Upload } from "lucide-react";
 
 /* ---------- Helper ---------- */
 const fmt = new Intl.NumberFormat("vi-VN");
@@ -59,10 +44,16 @@ class ProductPageClass extends React.Component {
     showAddModal: false,
     showUnitModal: false,
 
-    // ⚡ Đơn vị
-    units: [
-      { id: 1, isBase: true, name: "Chai", conversion: 1, price: "" },
-    ],
+    // ⚡ Form thêm sản phẩm
+    productName: "",
+    barcode: "",
+    cost: "",
+    price: "",
+    isLow: false,
+    categoryId: "",
+    quantity: "",
+    imageUrl: "",
+    units: [], // { id, isBase, name, conversion, price }
   };
 
   mounted = false;
@@ -96,14 +87,11 @@ class ProductPageClass extends React.Component {
       profile =
         JSON.parse(localStorage.getItem("userProfile") || "null") ||
         JSON.parse(localStorage.getItem("auth") || "null")?.profile;
-    } catch (e) {
-      logApp("Parse profile error", e);
-    }
+    } catch (e) {}
 
     const shopId = Number(profile?.shopId || 0);
     if (!shopId) return;
 
-    logApp("Detected shopId =", shopId);
     this.setState({ shopId }, () => {
       this.fetchUnitsAllByShop();
       this.fetchCategories();
@@ -210,9 +198,7 @@ class ProductPageClass extends React.Component {
       });
 
       if (this.mounted) this.setState({ unitsByPid });
-    } catch (e) {
-      logUnit("Fetch units error", e);
-    }
+    } catch {}
   };
 
   /* ---------- PRODUCTS ---------- */
@@ -265,9 +251,10 @@ class ProductPageClass extends React.Component {
             stock: p.quantity ?? 0,
             price: base ? base.price : p.price ?? 0,
             img:
-              p.productImageURL ||
-              p.imageUrl ||
-              "https://via.placeholder.com/150",
+  p.productImageURL ||
+  p.imageUrl ||
+  "/no-image.png",
+
             unitOptions: unitRows,
           };
         });
@@ -298,28 +285,517 @@ class ProductPageClass extends React.Component {
   setActiveTab = (v) => this.setState({ activeTab: v });
   setSearch = (v) => this.setState({ search: v });
 
-  addUnitRow = () => {
-    this.setState((prev) => ({
-      units: [
-        ...prev.units,
-        { id: Date.now(), isBase: false, name: "", conversion: "", price: "" },
-      ],
-    }));
-  };
+  /* ---------- Unit Handlers ---------- */
+  handleImageUpload = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
 
-  updateUnitField = (id, field, value) => {
-    this.setState((prev) => ({
-      units: prev.units.map((u) =>
-        u.id === id ? { ...u, [field]: value } : u
-      ),
-    }));
-  };
+  this.setState({
+    imageFile: file, // lưu file thật
+    imageUrl: URL.createObjectURL(file), // preview
+  });
+};
 
-  removeUnitRow = (id) => {
-    this.setState((prev) => ({
-      units: prev.units.filter((u) => u.id !== id),
+
+handleAddUnit = () => {
+  this.setState((prev) => ({
+    units: [
+      ...prev.units,
+      { id: Date.now(), isBase: false, name: "", conversion: 1, price: "" },
+    ],
+  }));
+};
+
+handleRemoveUnit = (idx) => {
+  this.setState((prev) => {
+    const newUnits = [...prev.units];
+    newUnits.splice(idx, 1);
+    return { units: newUnits };
+  });
+};
+
+handleChangeUnit = (idx, key, value) => {
+  this.setState((prev) => {
+    const newUnits = [...prev.units];
+    newUnits[idx][key] = value;
+    return { units: newUnits };
+  });
+};
+
+handleSetBaseUnit = (idx, checked) => {
+  this.setState((prev) => {
+    const newUnits = prev.units.map((u, i) => ({
+      ...u,
+      isBase: i === idx ? checked : false,
+      conversion: i === idx ? 1 : u.conversion,
     }));
-  };
+    return { units: newUnits };
+  });
+};
+
+  /* ---------- Lưu sản phẩm ---------- */
+  handleSaveProduct = async () => {
+  const token = localStorage.getItem("accessToken");
+  const { shopId, units, categoryId, isLow, imageUrl, quantity } = this.state;
+
+  // Lấy dữ liệu từ form state (không dùng querySelector)
+  const { productName, barcode, cost, price } = this.state;
+
+  // Kiểm tra dữ liệu bắt buộc
+  if (!productName || !categoryId || !price) {
+    alert("⚠️ Vui lòng nhập đầy đủ thông tin bắt buộc");
+    return;
+  }
+
+  try {
+    /* 1️⃣ Tạo sản phẩm */
+    const productPayload = {
+      productName,
+      quantity: Number(quantity || 0),
+      cost: Number(cost || 0),
+      price: Number(price || 0),
+      promotionPrice: 0,
+      productImageURL: imageUrl || "",
+      barcode,
+      discount: 0,
+      isLow,
+      status: 1,
+      shopId,
+      categoryId: Number(categoryId),
+      categoryName: "",
+      unitIdFk: 0,
+    };
+
+    console.log("📦 Gửi sản phẩm:", productPayload);
+
+    const resProd = await fetch(`${API_URL}/api/products`, {
+      method: "POST",
+      headers: {
+        accept: "text/plain",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(productPayload),
+    });
+
+    const prodData = await this.safeParse(resProd);
+    if (!resProd.ok) throw new Error(prodData?.message || "Lỗi tạo sản phẩm");
+
+    const productId = prodData.productId;
+    console.log("✅ Tạo sản phẩm thành công:", prodData);
+
+    /* 2️⃣ Gọi API tạo đơn vị quy đổi */
+    for (const u of units) {
+      const unitPayload = {
+        shopId,
+        productId,
+        unitId: 0,
+        unitName: u.name,
+        conversionFactor: Number(u.conversion || 1), // ✅ FIX đúng field
+        price: Number(u.price || 0),
+      };
+
+      console.log("📏 Gửi đơn vị:", unitPayload);
+
+      const resUnit = await fetch(`${API_URL}/api/product-units`, {
+        method: "POST",
+        headers: {
+          accept: "text/plain",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(unitPayload),
+      });
+
+      const unitData = await this.safeParse(resUnit);
+      if (!resUnit.ok) {
+        console.error("⚠️ Lỗi tạo đơn vị:", u.name, unitData);
+      } else {
+        console.log("✅ Đã thêm đơn vị:", unitData);
+      }
+    }
+
+    alert("🎉 Thêm sản phẩm và đơn vị thành công!");
+    this.toggleAddModal();
+    this.ensureProducts(this.state.activeTab, true); // reload danh sách
+  } catch (err) {
+    console.error(err);
+    alert("❌ Thêm sản phẩm thất bại: " + err.message);
+  }
+};
+
+
+
+  /* ---------- UI - Modal thêm sản phẩm ---------- */
+  renderAddModal() {
+    const { categories, categoryId, productName, barcode, cost, price, isLow, quantity } =
+      this.state;
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
+        <div className="bg-white w-[1100px] h-[90vh] shadow-2xl rounded-2xl p-10 overflow-y-auto relative">
+          <button
+            onClick={this.toggleAddModal}
+            className="absolute top-6 right-6 text-gray-500 hover:text-gray-800"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <h2 className="text-3xl font-extrabold text-[#007E85] mb-8">
+            SẢN PHẨM
+          </h2>
+
+          <div className="grid grid-cols-2 gap-8">
+            {/* LEFT */}
+            <div className="space-y-6">
+              <div className="flex flex-col items-center">
+  <label
+    htmlFor="imageUpload"
+    className="w-[140px] h-[140px] rounded-xl border-2 border-dashed border-[#00A8B0] bg-[#E1FBFF] grid place-items-center text-[#00A8B0] font-semibold text-sm cursor-pointer hover:bg-[#D5F7F9] transition overflow-hidden"
+  >
+    {this.state.imageUrl ? (
+      <img
+        src={this.state.imageUrl}
+        alt="Preview"
+        className="w-full h-full object-cover"
+      />
+    ) : (
+      <>
+        <Upload className="w-6 h-6 mb-1" />
+        ẢNH
+      </>
+    )}
+  </label>
+  <input
+    id="imageUpload"
+    type="file"
+    accept="image/*"
+    className="hidden"
+    onChange={this.handleImageUpload}
+  />
+  <p className="text-sm text-gray-500 mt-2 text-center">
+    Nhấn để tải ảnh lên
+  </p>
+</div>
+
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold block mb-1">
+                    Tên sản phẩm <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    placeholder="Vd. Trà sữa Thái xanh"
+                    value={productName}
+                    onChange={(e) =>
+                      this.setState({ productName: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold block mb-1">Mã vạch</label>
+                  <Input
+                    placeholder="Vd. 1234567890"
+                    value={barcode}
+                    onChange={(e) => this.setState({ barcode: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold block mb-1">
+                  Phân loại <span className="text-red-500">*</span>
+                </label>
+                <select
+                  className="border rounded-md px-3 py-2 w-full"
+                  value={categoryId}
+                  onChange={(e) => this.setState({ categoryId: e.target.value })}
+                >
+                  <option value="">-- Chọn danh mục --</option>
+                  {categories
+                    .filter((c) => c.id !== "all")
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
+                    🧋
+                  </div>
+                  <div>
+                    <p className="font-semibold">Báo hết món</p>
+                    <p className="text-sm text-gray-500">
+                      Hiển thị thông báo hết món
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="toggle"
+                  checked={isLow}
+                  onChange={(e) => this.setState({ isLow: e.target.checked })}
+                />
+              </div> */}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold block mb-2">
+                    Giá vốn <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Vd. 123456"
+                      value={cost}
+                      onChange={(e) => this.setState({ cost: e.target.value })}
+                    />
+                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
+                      VND
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <label className="font-semibold block mb-2">
+                    Giá bán <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Vd. 123456"
+                      value={price}
+                      onChange={(e) => this.setState({ price: e.target.value })}
+                    />
+                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
+                      VND
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold block mb-1">Số lượng</label>
+                <Input
+                  placeholder="Vd. 10"
+                  value={quantity}
+                  onChange={(e) => this.setState({ quantity: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* RIGHT */}
+            <div className="space-y-4">
+              <h3 className="font-bold text-lg text-gray-800 mb-2">
+                Thông tin chi tiết
+              </h3>
+                <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
+                    🧋
+                  </div>
+                  <div>
+                    <p className="font-semibold">Báo hết món</p>
+                    <p className="text-sm text-gray-500">
+                      Hiển thị thông báo hết món
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="toggle"
+                  checked={isLow}
+                  onChange={(e) => this.setState({ isLow: e.target.checked })}
+                />
+              </div>
+              <div className="border rounded-lg p-4">
+  <div className="flex items-center justify-between mb-3">
+    <div>
+      <p className="font-semibold">Đơn vị</p>
+      <p className="text-sm text-gray-500">
+        Thiết lập các đơn vị quy đổi
+      </p>
+    </div>
+    <Button
+      variant="outline"
+      className="rounded-lg px-4 py-2 text-sm"
+      onClick={this.toggleUnitModal}
+    >
+      Cấu hình
+    </Button>
+  </div>
+
+  {/* ✅ Danh sách đơn vị hiển thị sau khi cấu hình */}
+  <div className="space-y-2">
+    {this.state.units.length === 0 ? (
+      <p className="text-gray-400 text-sm">Chưa có đơn vị</p>
+    ) : (
+      this.state.units.map((u, idx) => (
+        <div
+          key={u.id}
+          className="flex justify-between items-center bg-white border rounded-lg px-3 py-2"
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-gray-700">{u.name || "—"}</span>
+            {u.isBase && (
+              <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
+                cơ bản
+              </span>
+            )}
+            {!u.isBase && (
+              <span className="text-xs text-gray-500">
+                x{u.conversion || 1}
+              </span>
+            )}
+          </div>
+          {!u.isBase && (
+            <span className="text-sm text-[#00A8B0] font-semibold">
+              + {u.price ? fmt.format(u.price) : 0}đ
+            </span>
+          )}
+        </div>
+      ))
+    )}
+  </div>
+</div>
+
+            </div>
+          </div>
+
+          <div className="mt-8 flex justify-end gap-4">
+            <Button
+              variant="outline"
+              className="rounded-lg px-6 py-2 text-gray-600"
+              onClick={this.toggleAddModal}
+            >
+              Hủy
+            </Button>
+            <Button
+              className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+              onClick={this.handleSaveProduct}
+            >
+              Lưu sản phẩm
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  /* ---------- Unit Modal ---------- */
+renderUnitModal() {
+  const { units } = this.state;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
+      <div className="bg-white w-[600px] rounded-2xl shadow-2xl p-8 relative">
+        <button
+          onClick={this.toggleUnitModal}
+          className="absolute top-5 right-5 text-gray-500 hover:text-gray-800"
+        >
+          <X className="w-6 h-6" />
+        </button>
+
+        <h2 className="text-2xl font-extrabold text-[#007E85] mb-6">
+          CẤU HÌNH ĐƠN VỊ
+        </h2>
+
+        {/* Danh sách đơn vị */}
+        <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+          {units.map((u, idx) => (
+            <div
+              key={u.id}
+              className="border border-gray-200 rounded-xl p-4 space-y-3 relative"
+            >
+              {idx > 0 && (
+                <button
+                  className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                  onClick={() => this.handleRemoveUnit(idx)}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={u.isBase}
+                  onChange={(e) => this.handleSetBaseUnit(idx, e.target.checked)}
+                />
+                <label className="font-semibold text-gray-800">
+                  Đơn vị cơ bản
+                </label>
+                <Input
+                  placeholder="Vd. chai"
+                  value={u.name}
+                  onChange={(e) => this.handleChangeUnit(idx, "name", e.target.value)}
+                  className="ml-auto w-[150px]"
+                />
+              </div>
+
+              {!u.isBase && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <label className="font-semibold text-gray-800">
+                      Giá trị quy đổi
+                    </label>
+                    <Input
+                      placeholder="Vd. 6"
+                      type="number"
+                      value={u.conversion}
+                      onChange={(e) =>
+                        this.handleChangeUnit(idx, "conversion", e.target.value)
+                      }
+                      className="w-[120px]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="font-semibold text-gray-800">Giá bán</label>
+                    <Input
+                      placeholder="Vd. 120000"
+                      type="number"
+                      value={u.price}
+                      onChange={(e) =>
+                        this.handleChangeUnit(idx, "price", e.target.value)
+                      }
+                      className="w-[150px]"
+                    />
+                    <span className="text-gray-500">VND</span>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Thêm đơn vị */}
+        <Button
+          variant="outline"
+          className="mt-4 w-full border-[#00A8B0] text-[#00A8B0] hover:bg-[#E1FBFF]"
+          onClick={this.handleAddUnit}
+        >
+          + Thêm đơn vị
+        </Button>
+
+        {/* Nút hành động */}
+        <div className="mt-8 flex justify-end gap-4">
+          <Button
+            variant="outline"
+            className="rounded-lg px-6 py-2 text-gray-600"
+            onClick={this.toggleUnitModal}
+          >
+            Hủy
+          </Button>
+          <Button
+            className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+            onClick={this.toggleUnitModal}
+          >
+            Đồng ý
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
   /* ---------- FILTER DATA ---------- */
   getFiltered = (tabValue) => {
@@ -329,7 +805,6 @@ class ProductPageClass extends React.Component {
     return entry.items.filter((it) => normalize(it.name).includes(q));
   };
 
-  /* ---------- RENDER ---------- */
   render() {
     const {
       categories,
@@ -338,25 +813,18 @@ class ProductPageClass extends React.Component {
       loading,
       productsByTab,
       search,
-      showFilter,
       showAddModal,
-      showUnitModal,
-      units,
     } = this.state;
 
     return (
       <div className="flex h-screen w-screen overflow-hidden">
         <Sidebar />
-
-        {/* CONTENT */}
         <div className="flex-1 bg-gradient-to-r from-[#EAFDFC] via-[#F7E7CE] to-[#E0F7FA] p-10 overflow-y-auto relative">
-          {/* Header */}
           <div className="flex items-center justify-between mb-8">
             <h1 className="text-3xl font-extrabold text-[#007E85]">
               KHO HÀNG
             </h1>
             <div className="flex items-center space-x-3">
-              {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
                 <Input
@@ -366,17 +834,6 @@ class ProductPageClass extends React.Component {
                   className="pl-12 w-72 h-11 text-base rounded-xl bg-white/80 border border-gray-200 focus-visible:ring-0"
                 />
               </div>
-
-              {/* Filter */}
-              <Button
-                variant="outline"
-                className="rounded-xl text-base px-5 py-2 flex items-center gap-2"
-                onClick={this.toggleFilter}
-              >
-                <Filter className="w-5 h-5" /> Lọc
-              </Button>
-
-              {/* Add */}
               <Button
                 className="bg-[#00A8B0] text-white text-base rounded-xl px-6 py-3 hover:bg-[#00929A] flex items-center gap-2"
                 onClick={this.toggleAddModal}
@@ -386,7 +843,6 @@ class ProductPageClass extends React.Component {
             </div>
           </div>
 
-          {/* Tabs */}
           {!categories.length ? (
             <div className="text-gray-500">
               {loading ? "Đang tải danh mục..." : catError || "Không có danh mục"}
@@ -439,7 +895,6 @@ class ProductPageClass extends React.Component {
                                 : "bg-white"
                             }`}
                           >
-                            {/* Name */}
                             <div className="flex items-center gap-4">
                               <img
                                 src={p.img}
@@ -462,7 +917,6 @@ class ProductPageClass extends React.Component {
                               </div>
                             </div>
 
-                            {/* Stock */}
                             <div className="text-center">
                               <p className="text-base text-gray-500">Kho</p>
                               {p.stock > 0 ? (
@@ -474,7 +928,6 @@ class ProductPageClass extends React.Component {
                               )}
                             </div>
 
-                            {/* Price */}
                             <div className="text-right">
                               <p
                                 className={`font-bold text-lg ${
@@ -487,7 +940,6 @@ class ProductPageClass extends React.Component {
                               </p>
                             </div>
 
-                            {/* Units */}
                             <div className="flex flex-col items-start">
                               <p className="text-base text-gray-500 mb-2">
                                 Đơn vị
@@ -511,7 +963,6 @@ class ProductPageClass extends React.Component {
                               </div>
                             </div>
 
-                            {/* Action */}
                             <div className="flex justify-end">
                               <Button
                                 variant="outline"
@@ -529,350 +980,14 @@ class ProductPageClass extends React.Component {
               })}
             </Tabs>
           )}
-
-          {/* ✅ Modal Filter */}
-          {showFilter && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-end z-50">
-              <div className="bg-white w-[420px] h-full p-8 shadow-2xl rounded-l-2xl animate-slide-in-right overflow-y-auto">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold text-[#00A8B0]">LỌC</h2>
-                  <button
-                    onClick={this.toggleFilter}
-                    className="text-gray-500 hover:text-gray-800"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-                <div className="border rounded-lg p-4 mb-6">
-                  <h3 className="font-semibold text-gray-700 mb-4">
-                    Sắp xếp
-                  </h3>
-                  {["Theo tên", "Theo giá", "Theo tỉ lệ mua hàng"].map(
-                    (label) => (
-                      <div
-                        key={label}
-                        className="flex justify-between items-center mb-3 last:mb-0"
-                      >
-                        <span className="text-gray-700">{label}</span>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm">
-                            ⬆️
-                          </Button>
-                          <Button variant="outline" size="sm">
-                            ⬇️
-                          </Button>
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-
-                <div className="border rounded-lg p-4 mb-6">
-                  <h3 className="font-semibold text-gray-700 mb-4">Tồn kho</h3>
-                  <div className="flex gap-3 flex-wrap">
-                    <Button
-                      variant="default"
-                      className="bg-[#00A8B0] text-white hover:bg-[#00929A]"
-                    >
-                      Tất cả
-                    </Button>
-                    <Button variant="outline">Còn hàng</Button>
-                    <Button variant="outline">Hết hàng</Button>
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-3 pt-4 border-t">
-                  <Button
-                    variant="outline"
-                    onClick={this.toggleFilter}
-                    className="rounded-lg px-5"
-                  >
-                    Thoát
-                  </Button>
-                  <Button variant="outline" className="rounded-lg px-5">
-                    Làm mới
-                  </Button>
-                  <Button className="bg-[#00A8B0] text-white rounded-lg px-6 hover:bg-[#00929A]">
-                    Áp dụng
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ✅ Modal Thêm sản phẩm */}
-          {showAddModal && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-end z-50">
-              <div className="bg-white w-[1000px] h-full shadow-2xl rounded-l-2xl p-10 overflow-y-auto animate-slide-in-right relative">
-                <button
-                  onClick={this.toggleAddModal}
-                  className="absolute top-6 right-6 text-gray-500 hover:text-gray-800"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-
-                <h2 className="text-3xl font-extrabold text-[#007E85] mb-8">
-                  SẢN PHẨM
-                </h2>
-
-                <div className="grid grid-cols-2 gap-10">
-                  {/* LEFT */}
-                  <div className="space-y-6">
-                    <div>
-                      <label className="font-semibold block mb-2">
-                        Tên sản phẩm <span className="text-red-500">*</span>
-                      </label>
-                      <Input placeholder="Vd. Trà sữa Thái xanh" />
-                    </div>
-
-                    <div>
-                      <label className="font-semibold block mb-2">Mã vạch</label>
-                      <Input placeholder="Vd. 1234567890" />
-                    </div>
-
-                    <div>
-                      <label className="font-semibold block mb-2">
-                        Phân loại <span className="text-red-500">*</span>
-                      </label>
-                      <Input placeholder="Vd. Trà sữa" />
-                    </div>
-
-                    <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
-                          🧋
-                        </div>
-                        <div>
-                          <p className="font-semibold">Báo hết món</p>
-                          <p className="text-sm text-gray-500">
-                            Hiển thị thông báo hết món
-                          </p>
-                        </div>
-                      </div>
-                      <input type="checkbox" className="toggle" />
-                    </div>
-
-                    <div>
-                      <label className="font-semibold block mb-3">
-                        Phương thức bán hàng{" "}
-                        <span className="text-red-500">*</span>
-                      </label>
-                      <div className="flex gap-3">
-                        {["Mang về", "Giao hàng", "Tại chỗ"].map((label) => (
-                          <div
-                            key={label}
-                            className="border-2 border-[#00A8B0] rounded-xl px-6 py-4 text-center cursor-pointer hover:bg-[#E1FBFF]"
-                          >
-                            <p className="font-semibold text-[#007E85]">
-                              {label}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-semibold block mb-2">Giá vốn</label>
-                        <div className="flex gap-2">
-                          <Input placeholder="Vd. 123456" />
-                          <span className="bg-gray-100 border rounded-md px-3 flex items-center">
-                            VND
-                          </span>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="font-semibold block mb-2">
-                          Giá bán <span className="text-red-500">*</span>
-                        </label>
-                        <div className="flex gap-2">
-                          <Input placeholder="Vd. 123456" />
-                          <span className="bg-gray-100 border rounded-md px-3 flex items-center">
-                            VND
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* RIGHT */}
-                  <div className="space-y-5">
-                    <h3 className="text-xl font-bold text-gray-800 mb-2">
-                      Thông tin chi tiết
-                    </h3>
-
-                    {["Nhiệt độ", "Size", "Đường", "Đá"].map((item) => (
-                      <div
-                        key={item}
-                        className="border rounded-lg p-3 flex justify-between items-center"
-                      >
-                        <p className="font-semibold">{item}</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-gray-500">Tắt</span>
-                          <input type="checkbox" className="toggle" />
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Đơn vị */}
-                    <div className="border rounded-lg p-4">
-                      <div className="flex justify-between items-center mb-3">
-                        <p className="font-semibold">Đơn vị</p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={this.toggleUnitModal}
-                          className="text-sm"
-                        >
-                          + Thêm đơn vị
-                        </Button>
-                      </div>
-                      {units.map((u, idx) => (
-                        <div
-                          key={u.id}
-                          className="flex items-center justify-between py-1 border-b last:border-0 text-sm"
-                        >
-                          <span>
-                            {u.isBase ? "⭐" : idx + 1}. {u.name || "Chưa đặt tên"}
-                          </span>
-                          <span className="text-gray-500">
-                            x{u.conversion || 1} → {u.price || 0} VND
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-8 flex justify-end gap-4">
-                  <Button
-                    variant="outline"
-                    className="rounded-lg px-6 py-2 text-gray-600"
-                    onClick={this.toggleAddModal}
-                  >
-                    Hủy
-                  </Button>
-                  <Button className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]">
-                    Lưu sản phẩm
-                  </Button>
-                </div>
-
-                {/* ⚡ Modal con: Cấu hình đơn vị */}
-                {showUnitModal && (
-                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-50">
-                    <div className="bg-white w-[400px] p-6 rounded-2xl shadow-2xl relative">
-                      <button
-                        onClick={this.toggleUnitModal}
-                        className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
-                      >
-                        <X className="w-5 h-5" />
-                      </button>
-                      <h3 className="text-lg font-bold mb-4">Cấu hình đơn vị</h3>
-
-                      {units.map((u) => (
-                        <div key={u.id} className="mb-4 border-b pb-3">
-                          <div className="flex items-center gap-2 mb-2">
-                            <input
-                              type="checkbox"
-                              checked={u.isBase}
-                              onChange={(e) => {
-                                // chỉ 1 đơn vị cơ bản
-                                const checked = e.target.checked;
-                                this.setState((prev) => ({
-                                  units: prev.units.map((x) => ({
-                                    ...x,
-                                    isBase: x.id === u.id ? checked : false,
-                                  })),
-                                }));
-                              }}
-                            />
-                            <Input
-                              value={u.name}
-                              onChange={(e) =>
-                                this.updateUnitField(u.id, "name", e.target.value)
-                              }
-                              placeholder="Tên đơn vị (vd: chai)"
-                            />
-                            {!u.isBase && (
-                              <button
-                                onClick={() => this.removeUnitRow(u.id)}
-                                className="text-red-500 hover:text-red-700"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                          {!u.isBase && (
-                            <>
-                              <Input
-                                value={u.conversion}
-                                onChange={(e) =>
-                                  this.updateUnitField(
-                                    u.id,
-                                    "conversion",
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="Giá trị quy đổi"
-                                className="mb-2"
-                              />
-                              <div className="flex gap-2">
-                                <Input
-                                  value={u.price}
-                                  onChange={(e) =>
-                                    this.updateUnitField(
-                                      u.id,
-                                      "price",
-                                      e.target.value
-                                    )
-                                  }
-                                  placeholder="Giá bán"
-                                />
-                                <span className="bg-gray-100 border rounded-md px-2 flex items-center text-sm">
-                                  VND
-                                </span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ))}
-
-                      <Button
-                        variant="outline"
-                        className="w-full mb-4"
-                        onClick={this.addUnitRow}
-                      >
-                        + Thêm đơn vị
-                      </Button>
-
-                      <div className="flex justify-end gap-3">
-                        <Button
-                          variant="outline"
-                          className="px-5"
-                          onClick={this.toggleUnitModal}
-                        >
-                          Hủy
-                        </Button>
-                        <Button
-                          className="bg-[#00A8B0] text-white px-5 hover:bg-[#00929A]"
-                          onClick={this.toggleUnitModal}
-                        >
-                          Đồng ý
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          {showAddModal && this.renderAddModal()}
+          {this.state.showUnitModal && this.renderUnitModal()}
         </div>
       </div>
     );
   }
 }
 
-/* ---------- Wrapper ---------- */
 export default function ProductPage() {
   const navigate = useNavigate();
   return <ProductPageClass navigate={navigate} />;
