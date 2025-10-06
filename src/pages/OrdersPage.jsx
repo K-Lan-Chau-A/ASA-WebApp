@@ -5,11 +5,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { hubConnection } from "@/signalr/connection";
 import API_URL from "@/config/api";
 import {
   Search, Star, Heart, Plus, LogOut,
   AlertCircle, Bell, ChevronDown, Menu, Printer, Volume2,
-  Trash2, X
+  Trash2, X, CheckCircle 
 } from "lucide-react";
 
 const DEBUG = true;
@@ -85,7 +86,11 @@ class OrdersPageClass extends React.Component {
     },
 
     customerSuggestions: [],
-     
+    allProducts: [],
+
+    notifications: [],
+  showNotifications: false, 
+  unreadCount: 0,
   };
 
   mounted = false;
@@ -94,6 +99,63 @@ class OrdersPageClass extends React.Component {
   componentDidMount() {
     this.mounted = true;
     logApp("OrdersPage mounted");
+document.addEventListener("click", this.handleOutsideClick);
+
+    // 🚀 Kết nối SignalR ngay khi vào trang
+if (hubConnection.state === "Disconnected") {
+  hubConnection
+    .start()
+    .then(() => {
+      const hubUrl = hubConnection?.connection?.baseUrl || import.meta.env.VITE_API_URL;
+      const connectionId = hubConnection?.connectionId || "(unknown)";
+      console.groupCollapsed("%c[SignalR]%c Connected!", "color:#22d3ee;font-weight:700", "color:inherit");
+      console.log("✅ URL:", hubUrl);
+      console.log("🔗 ConnectionId:", connectionId);
+      console.log("📡 State:", hubConnection.state);
+      console.groupEnd();
+
+      hubConnection.on("ReceiveNotification", (msg) => {
+  console.groupCollapsed(
+    "%c[SignalR]%c ReceiveNotification",
+    "color:#22d3ee;font-weight:700",
+    "color:inherit"
+  );
+  console.log("🔔 Raw message:", msg);
+  console.groupEnd();
+
+  if (!this.mounted) return;
+
+  const n = {
+  id: msg.notificationId || msg.id || Date.now(),
+  title: msg.title || "Thông báo",
+  text: msg.content || msg.message || (typeof msg === "string" ? msg : "Không có nội dung"),
+  read: false,
+  createdAt: msg.createdAt || new Date().toISOString(), 
+  type: msg.type ?? 0,
+};
+
+
+  this.setState((prev) => {
+    // Kiểm tra trùng id (tránh double insert nếu backend phát lại)
+    const exists = prev.notifications.some((x) => x.id === n.id);
+    if (exists) return prev;
+
+    const updatedList = [n, ...prev.notifications];
+    const updatedUnread = prev.unreadCount + 1;
+
+    console.log("🆕 New notification added:", n);
+
+    return {
+      notifications: updatedList,
+      unreadCount: updatedUnread,
+    };
+  });
+});
+
+    })
+    .catch((err) => console.error("[SignalR] Connection error:", err));
+}
+
 
 if (localStorage.getItem("resetCustomer") === "1") {
     this.clearCustomer();
@@ -125,7 +187,8 @@ if (localStorage.getItem("resetCustomer") === "1") {
 
     this.setState({ shopId: sId }, () => {
       this.fetchUnitsAllByShop();
-      this.fetchCategories();
+      this.fetchAllProductsOnce();
+      this.fetchNotifications();
     });
   }
 
@@ -144,6 +207,51 @@ if (localStorage.getItem("resetCustomer") === "1") {
       }
     }
   }
+markNotificationAsRead = async (id) => {
+  const token = localStorage.getItem("accessToken");
+  if (!token || !id) return;
+
+  const notification = this.state.notifications.find(n => n.id === id);
+  if (!notification) {
+    console.warn("⚠️ Notification not found in state:", id);
+    return;
+  }
+
+  // Lấy userProfile để lấy shopId, userId
+  const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+
+  // Chuẩn bị payload đúng schema Swagger
+  const payload = {
+    shopId: Number(profile?.shopId || 0),
+    userId: Number(profile?.userId || 0),
+    title: notification.title || "Thông báo",
+    content: notification.text || "",
+    type: 0, // nếu backend có phân loại thì set đúng type ở đây
+    isRead: true,
+    createdAt: new Date().toISOString(), // hoặc notification.createdAt nếu có
+  };
+
+  try {
+    const url = `${API_URL}/api/notifications/${id}`;
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await this.safeParse(res);
+    if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+    console.log("✅ Marked notification as read:", id, payload);
+  } catch (e) {
+    console.error("❌ Failed to mark notification as read:", e);
+  }
+};
+
 
   /* ===================== UTILS ===================== */
   safeParse = async (res) => {
@@ -153,6 +261,31 @@ if (localStorage.getItem("resetCustomer") === "1") {
       try { return JSON.parse(text); } catch { return { raw: text }; }
     }
   };
+
+formatTimeAgo = (isoString) => {
+  if (!isoString) return "";
+  const now = new Date();
+  const then = new Date(isoString);
+  const diff = (now - then) / 1000; // giây
+
+  if (diff < 10) return "Vừa xong";
+  if (diff < 60) return `${Math.floor(diff)} giây trước`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
+
+  const days = Math.floor(diff / 86400);
+  if (days === 1) return `Hôm qua, ${then.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
+  if (days < 7) return `${days} ngày trước`;
+
+  return then.toLocaleDateString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 // ===== DEBUG HELPERS & VALIDATION =====
 validateCartLines = (orders = []) => {
   const issues = [];
@@ -210,16 +343,27 @@ logCartMap = (orders = [], orderDetails = []) => {
       logCats("Products raw.items length", items.length);
 
       const byShop = items
-        .filter((p) => Number(p.shopId) === Number(this.state.shopId))
-        .filter((p) => Number(p.status) === 1);
+  .filter((p) => Number(p.shopId) === Number(this.state.shopId))
+  .filter((p) => Number(p.status) === 1);
 
-      const map = new Map();
-      for (const p of byShop) {
-        const id = p.categoryId;
-        const name = p.categoryName || `Danh mục ${id}`;
-        if (!map.has(id)) map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
-      }
-      const withAll = [{ id: "all", name: "Tất cả", desc: "", value: "all" }, ...Array.from(map.values())];
+const map = new Map();
+
+for (const p of byShop) {
+  const id = p.categoryId ?? null;
+  const name = p.categoryName || (id ? `Danh mục ${id}` : "Chưa phân loại");
+  if (!id) continue; 
+  if (!map.has(id)) map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
+}
+
+const withAll = [
+  { id: "all", name: "Tất cả", desc: "Hiển thị toàn bộ sản phẩm", value: "all" },
+  ...Array.from(map.values())
+];
+
+if (!this.mounted) return;
+this.setState({ categories: withAll, activeTab: "all" });
+logCats("Derived category count", withAll.length, withAll);
+
 
       if (!this.mounted) return;
       this.setState({ categories: withAll, activeTab: "all" });
@@ -319,72 +463,140 @@ logCartMap = (orders = [], orderDetails = []) => {
 
   /* ===================== PRODUCTS CACHE ===================== */
   ensureProducts = async (tabValue, force = false) => {
-    const entry = this.state.productsByTab[tabValue];
-    const shouldSkip = entry?.items?.length || entry?.loading;
-    logProd("ensureProducts", { tabValue, hasCached: !!entry?.items?.length, loading: !!entry?.loading, force });
-    if (shouldSkip && !force) return;
-    await this.loadProductsFor(tabValue);
-  };
+  const entry = this.state.productsByTab[tabValue];
+  const shouldSkip = entry?.items?.length || entry?.loading;
+  if (shouldSkip && !force) return;
 
-  loadProductsFor = async (tabValue) => {
-    if (!this.state.shopId) return;
-    const token = localStorage.getItem("accessToken");
-    const category = this.state.categories.find((c) => c.value === tabValue);
-    const categoryId = category && category.id !== "all" ? Number(category.id) : null;
+  const category = this.state.categories.find((c) => c.value === tabValue);
+  const categoryId = category && category.id !== "all" ? Number(category.id) : null;
 
-    this.setState((prev) => ({
-      productsByTab: { ...prev.productsByTab, [tabValue]: { items: [], loading: true, error: "" } },
+  const filtered = this.state.allProducts
+    .filter((p) => categoryId ? Number(p.categoryId) === categoryId : true)
+    .map((p) => {
+      const pid = Number(p.productId);
+      const unitRows = this.state.unitsByPid[pid] || [];
+      const base = unitRows.length ? unitRows[0] : null;
+      return {
+        id: pid,
+        name: p.productName,
+        price: base ? base.price : (p.price ?? 0),
+        unit: base ? base.unitName : "—",
+        productUnitId: base ? base.productUnitId : undefined,
+        unitOptions: unitRows,
+        img: p.productImageURL || "https://placehold.co/150x150",
+      };
+    });
+
+  this.setState((prev) => ({
+    productsByTab: {
+      ...prev.productsByTab,
+      [tabValue]: { items: filtered, loading: false, error: "" },
+    },
+  }));
+};
+fetchNotifications = async () => {
+  const { shopId } = this.state;
+  if (!shopId) return;
+
+  const token = localStorage.getItem("accessToken");
+  try {
+    const url = `${API_URL}/api/notifications?ShopId=${shopId}`;
+    const res = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    const data = await this.safeParse(res);
+    if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+    const items = Array.isArray(data.items) ? data.items : [];
+
+    const sorted = items.sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
+
+    const mapped = sorted.map((n) => ({
+      id: n.notificationId,
+      title: n.title,
+      text: n.content,
+      type: n.type ?? 0,
+      read: Boolean(n.isRead),
+      createdAt: n.createdAt,
     }));
 
-    try {
-      logProd("loadProductsFor", { tabValue, categoryId });
-      const url = `${API_URL}/api/products?page=1&pageSize=500`;
+    const unread = mapped.filter((n) => !n.read).length;
+
+    if (this.mounted) {
+      this.setState({
+        notifications: mapped,
+        unreadCount: unread,
+      });
+    }
+  } catch (e) {
+    console.error("[Notifications] Fetch error:", e);
+  }
+};
+
+  fetchAllProductsOnce = async () => {
+  if (!this.state.shopId) return;
+  const token = localStorage.getItem("accessToken");
+
+  try {
+    logProd("fetchAllProductsOnce start");
+    let page = 1;
+    const pageSize = 500;
+    let allItems = [];
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `${API_URL}/api/products?page=${page}&pageSize=${pageSize}`;
       const res = await fetch(url, {
-        headers: { accept: "*/*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        mode: "cors",
+        headers: {
+          accept: "*/*",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
       const data = await this.safeParse(res);
-      logProd("GET /api/products -> status", res.status, res.ok);
-
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
-      const raw = Array.isArray(data?.items) ? data.items : [];
-      logProd("raw items length", raw.length);
-
-      const filtered = raw
-        .filter((p) => Number(p.shopId) === Number(this.state.shopId))
-        .filter((p) => Number(p.status) === 1)
-        .filter((p) => (categoryId ? Number(p.categoryId) === categoryId : true))
-        .map((p) => {
-          const pid = Number(p.productId);
-          const unitRows = this.state.unitsByPid[pid] || [];
-          const base = unitRows.length ? unitRows[0] : null;
-          return {
-            id: pid,
-            name: p.productName,
-            price: base ? base.price : (p.price ?? 0),
-            unit: base ? base.unitName : "—",
-            productUnitId: base ? base.productUnitId : undefined,
-            unitOptions: unitRows,
-            img: p.productImageURL || "https://via.placeholder.com/150",
-          };
-        });
-
-      logProd("filtered items length", filtered.length);
-
-      this.setState((prev) => ({
-        productsByTab: { ...prev.productsByTab, [tabValue]: { items: filtered, loading: false, error: "" } },
-      }));
-    } catch (e) {
-      const errorMsg = String(e).includes("Failed to fetch")
-        ? "Không gọi được API sản phẩm."
-        : `Lỗi tải sản phẩm: ${e.message || e}`;
-      this.setState((prev) => ({
-        productsByTab: { ...prev.productsByTab, [tabValue]: { items: [], loading: false, error: errorMsg } },
-      }));
-      logProd("ERROR", errorMsg);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      allItems = allItems.concat(items);
+      hasMore = items.length === pageSize;
+      page++;
     }
-  };
+
+    const byShop = allItems
+      .filter((p) => Number(p.shopId) === Number(this.state.shopId))
+      .filter((p) => Number(p.status) === 1);
+
+    logProd("Fetched total", byShop.length, "products for shop", this.state.shopId);
+    if (this.mounted) this.setState({ allProducts: byShop }, () => {
+      this.buildCategoryTabs(byShop);
+      this.ensureProducts("all", true);
+    });
+  } catch (e) {
+    console.error("[PRODUCTS] Fetch failed:", e);
+  }
+};
+
+buildCategoryTabs = (products) => {
+  const map = new Map();
+  for (const p of products) {
+    const id = p.categoryId ?? null;
+    const name = p.categoryName || (id ? `Danh mục ${id}` : "Chưa phân loại");
+    if (!id) continue;
+    if (!map.has(id)) map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
+  }
+
+  const withAll = [
+    { id: "all", name: "Tất cả", desc: "Hiển thị toàn bộ sản phẩm", value: "all" },
+    ...Array.from(map.values()),
+  ];
+
+  if (this.mounted) this.setState({ categories: withAll, activeTab: "all" });
+};
 
   /* ===================== CART OPS ===================== */
   setSearch = (v) => this.setState({ search: v });
@@ -561,6 +773,50 @@ logCartMap = (orders = [], orderDetails = []) => {
       if (this.mounted) this.setState({ loadingCustomer: false });
     }
   };
+handleOutsideClick = (e) => {
+  if (!this.mounted) return;
+  if (!e.target.closest(".relative")) {
+    this.setState({ showNotifications: false });
+  }
+};
+toggleNotifications = () => {
+  this.setState((prev) => ({
+    showNotifications: !prev.showNotifications,
+  }));
+};
+
+markAllAsRead = async () => {
+  const unreadIds = this.state.notifications
+    .filter((n) => !n.read)
+    .map((n) => n.id);
+
+  if (!unreadIds.length) return;
+  this.setState((prev) => ({
+    unreadCount: 0,
+    notifications: prev.notifications.map((n) => ({ ...n, read: true })),
+  }));
+  try {
+    await Promise.all(unreadIds.map((id) => this.markNotificationAsRead(id)));
+    console.log("✅ All notifications marked as read");
+  } catch (e) {
+    console.error("❌ Failed to mark some notifications:", e);
+  }
+};
+
+
+handleNotificationClick = (id) => {
+  this.setState((prev) => ({
+    notifications: prev.notifications.map((n) =>
+      n.id === id ? { ...n, read: true } : n
+    ),
+    unreadCount: Math.max(
+      0,
+      prev.unreadCount - (prev.notifications.find((n) => n.id === id)?.read ? 0 : 1)
+    ),
+  }));
+  this.markNotificationAsRead(id);
+};
+
 
   handleSelectCustomer = (c) => {
     this.setState({
@@ -574,13 +830,10 @@ logCartMap = (orders = [], orderDetails = []) => {
   clearCustomer = () => {
   localStorage.removeItem("selectedCustomer");
   this.setState({
-    selectedCustomer: null,
     foundCustomer: null,
     customerSearch: "",
-    customerId: null,
   });
 };
-
 
   createCustomer = async () => {
     const { shopId, addingCustomer } = this.state;
@@ -768,6 +1021,15 @@ submitOrder = async () => {
 
   /* ===================== RENDER ===================== */
   render() {
+
+    const typeStyles = {
+  0: { bg: "bg-[#F0FCFB]", text: "text-[#007E85]", icon: <Bell className="w-5 h-5 text-[#00A8B0]" /> },
+  1: { bg: "bg-yellow-50", text: "text-yellow-800", icon: <AlertCircle className="w-5 h-5 text-yellow-500" /> },
+  2: { bg: "bg-pink-50", text: "text-pink-700", icon: <Heart className="w-5 h-5 text-pink-500" /> },
+  3: { bg: "bg-blue-50", text: "text-blue-700", icon: <Star className="w-5 h-5 text-blue-500" /> },
+  4: { bg: "bg-green-50", text: "text-green-700", icon: <CheckCircle className="w-5 h-5 text-green-500" /> },
+};
+
     const {
       invoices, activeIdx,
       categories, catError, loading,
@@ -851,11 +1113,12 @@ submitOrder = async () => {
                               <Card key={`${c.id}-${p.id}`} className="relative overflow-hidden">
                                 <CardContent className="p-2 flex flex-col items-center text-center">
                                   <img
-                                    src={p.img}
-                                    alt={p.name}
-                                    className="w-full h-32 object-cover rounded-lg"
-                                    onError={(e) => { e.currentTarget.src = "https://via.placeholder.com/150"; }}
-                                  />
+  src={p.img || "https://placehold.co/150x150?text=No+Image"}
+  alt={p.name}
+  className="w-full h-32 object-cover rounded-lg"
+  onError={(e) => { e.currentTarget.src = "https://placehold.co/150x150?text=No+Image"; }}
+/>
+
 
                                   {/* Tên sản phẩm */}
                                   <h3 className="mt-2 text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
@@ -936,7 +1199,89 @@ submitOrder = async () => {
                 <IconBtn title="Âm lượng"><Volume2 className="w-5 h-5" /></IconBtn>
                 <IconBtn title="Cảnh báo"><AlertCircle className="w-5 h-5" /></IconBtn>
                 <IconBtn title="In hoá đơn"><Printer className="w-5 h-5" /></IconBtn>
-                <IconBtn title="Thông báo"><Bell className="w-5 h-5" /></IconBtn>
+                <div className="relative">
+                  <IconBtn title="Thông báo" onClick={this.toggleNotifications}>
+                    <Bell className="w-5 h-5" />
+                    {this.state.unreadCount > 0 && (
+                      <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center shadow">
+                        {this.state.unreadCount}
+                      </span>
+                    )}
+                  </IconBtn>
+
+                  {this.state.showNotifications && (
+                    <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border z-50 animate-in fade-in-0 zoom-in-95 duration-150">
+                      {/* Header */}
+                      <div className="flex justify-between items-center px-4 py-2 border-b bg-gray-50 rounded-t-xl">
+                        <h3 className="font-semibold text-gray-700 flex items-center gap-2">
+                          <Bell className="w-4 h-4 text-[#00A8B0]" /> Thông báo
+                        </h3>
+                        {this.state.unreadCount > 0 && (
+                          <button
+                            onClick={this.markAllAsRead}
+                            className="text-xs text-[#00A8B0] hover:underline"
+                          >
+                            Đánh dấu đã đọc
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Body */}
+                      <div className="max-h-72 overflow-y-auto custom-scrollbar">
+                        {this.state.notifications.length === 0 ? (
+                          <div className="p-6 text-center text-gray-500 text-sm">
+                            🎉 Không có thông báo mới
+                          </div>
+                        ) : (
+                          this.state.notifications.map((n) => {
+                            const style = typeStyles[n.type] || typeStyles[0];
+                            return (
+                              <div
+                                key={n.id}
+                                onClick={() => this.handleNotificationClick(n.id)}
+                                className={`
+                                  animate-in fade-in-0 zoom-in-95 duration-200
+                                  px-4 py-3 flex gap-3 border-b cursor-pointer transition hover:brightness-95
+                                  ${style.bg} ${n.read ? "opacity-75" : "font-semibold"}
+                                `}
+                              >
+                                {/* Icon */}
+                                <div className="mt-1">{style.icon}</div>
+
+                                {/* Nội dung */}
+                                <div className={`flex-1 min-w-0 ${style.text}`}>
+                                  <div className="font-semibold text-sm truncate">
+                                    {n.title || "Thông báo mới"}
+                                  </div>
+                                  <div className="text-xs line-clamp-2">
+                                    {n.text || "Không có nội dung"}
+                                  </div>
+                                  <div className="text-[11px] text-gray-400 mt-1">
+                                    {this.formatTimeAgo(n.createdAt)}
+                                  </div>
+                                </div>
+
+                                {!n.read && (
+                                  <div className="w-2 h-2 rounded-full bg-[#00A8B0] self-center" />
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Footer */}
+                      <div className="px-4 py-2 text-center bg-gray-50 rounded-b-xl">
+                        <button
+                          className="text-xs text-[#00A8B0] hover:underline"
+                          onClick={() => alert("Hiện trang tất cả thông báo!")}
+                        >
+                          Xem tất cả
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div className="ml-1 flex items-center">
                   <button className="px-2.5 h-9 rounded-md bg-red-500 hover:bg-red-600 text-white text-sm font-semibold">VN</button>
                   <button className="w-8 h-9 grid place-items-center text-white/90 hover:text-white">

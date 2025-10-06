@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import Sidebar from "@/components/sidebar";
 import API_URL from "@/config/api";
-import { Search, Filter, Plus, X, Trash2, Upload } from "lucide-react";
+import { Search, Plus, X, Upload } from "lucide-react";
+import { Info, ChevronRight } from "lucide-react";
 
 /* ---------- Helper ---------- */
 const fmt = new Intl.NumberFormat("vi-VN");
@@ -48,11 +49,16 @@ class ProductPageClass extends React.Component {
     barcode: "",
     cost: "",
     price: "",
-    isLow: false,
+    isLow: 0,
     categoryId: "",
     quantity: "",
     imageUrl: "",
     units: [],
+
+    showDetailModal: false,
+    selectedProduct: null,
+    showEditModal: false,
+
   };
 
   mounted = false;
@@ -234,20 +240,29 @@ class ProductPageClass extends React.Component {
           categoryId ? Number(p.categoryId) === categoryId : true
         )
         .map((p) => {
-          const pid = Number(p.productId);
-          const unitRows = this.state.unitsByPid[pid] || [];
-          const base = unitRows.length ? unitRows[0] : null;
-          return {
-            id: pid,
-            name: p.productName,
-            category: p.categoryName,
-            stock: p.quantity ?? 0,
-            price: base ? base.price : (p.price ?? 0),
-            img: p.productImageURL || p.imageUrl || "/no-image.png",
+  const pid = Number(p.productId);
+  const unitRows = this.state.unitsByPid[pid] || [];
+  const base = unitRows.length ? unitRows[0] : null;
+  return {
+    id: pid,
+    name: p.productName,
+    category: p.categoryName ?? "",
+    stock: p.quantity ?? 0,
+    price: base ? base.price : (p.price ?? 0),
+    cost: p.cost ?? 0,
+    barcode: p.barcode ?? "",
+    discount: p.discount ?? 0,
+    isLow: p.isLow ?? 0,
+    status: p.status,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+    unitIdFk: p.unitIdFk,
+    shopId: p.shopId,
+    img: p.productImageURL || p.imageUrl || "/no-image.png",
+    unitOptions: unitRows,
+  };
+});
 
-            unitOptions: unitRows,
-          };
-        });
 
       this.setState((prev) => ({
         productsByTab: {
@@ -267,6 +282,44 @@ class ProductPageClass extends React.Component {
       }));
     }
   };
+openProductDetail = (product) => {
+  this.setState({ selectedProduct: product, showDetailModal: true });
+};
+
+closeProductDetail = () => {
+  this.setState({ showDetailModal: false, selectedProduct: null });
+};
+
+openEditProduct = () => {
+  const p = this.state.selectedProduct;
+  if (!p) return;
+
+  this.setState({
+    showDetailModal: false,
+    showEditModal: true,
+    // Gán dữ liệu vào form
+    productName: p.name || "",
+    barcode: p.barcode || "",
+    cost: p.cost || 0,
+    price: p.price || 0,
+    isLow: p.isLow || 0,
+    categoryId: p.categoryId || "",
+    quantity: p.stock || 0,
+    imageUrl: p.img || "",
+    units: p.unitOptions?.map((u) => ({
+      id: u.productUnitId,
+      name: u.unitName,
+      conversion: u.conversionFactor,
+      price: u.price,
+      isBase: u.conversionFactor === 1,
+    })) || [],
+  });
+};
+
+closeEditModal = () => {
+  this.setState({ showEditModal: false });
+};
+
 
   /* ---------- HANDLERS ---------- */
   toggleFilter = () => this.setState((s) => ({ showFilter: !s.showFilter }));
@@ -281,7 +334,7 @@ class ProductPageClass extends React.Component {
   handleConfirmUnits = () => {
     const validUnits = (this.state.units || []).filter(
       (u) =>
-        u.name?.trim() && // có tên
+        u.name?.trim() && 
         (u.isBase || Number(u.conversion) > 0) // nếu không phải cơ bản thì cần conversion > 0
     );
 
@@ -341,130 +394,153 @@ class ProductPageClass extends React.Component {
 
   /* ---------- Lưu sản phẩm ---------- */
   handleSaveProduct = async () => {
-    const token = localStorage.getItem("accessToken");
-    const {
-      shopId,
-      units,
-      categoryId,
-      productName,
-      barcode,
-      cost,
-      price,
-      quantity,
-    } = this.state;
+  const token = localStorage.getItem("accessToken");
+  const {
+    shopId,
+    units,
+    categoryId,
+    productName,
+    barcode,
+    cost,
+    price,
+    quantity,
+    imageFile
+  } = this.state;
 
-    // ✅ Kiểm tra bắt buộc
-    if (!productName || !categoryId || !price) {
-      alert("⚠️ Vui lòng nhập đầy đủ thông tin bắt buộc");
-      return;
+  if (!productName || !categoryId || !price) {
+    alert("⚠️ Vui lòng nhập đầy đủ thông tin bắt buộc");
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append("ShopId", shopId);
+    formData.append("ProductName", productName.trim());
+    formData.append("Barcode", barcode || null);
+    formData.append("CategoryId", Number(categoryId));
+    formData.append("Price", Number(price));
+    formData.append("Cost", Number(cost || 0));
+    formData.append("Quantity", Number(quantity || 0));
+    formData.append("Status", 1); // active
+    formData.append("Discount", 0);
+    formData.append("IsLow", Number(this.state.isLow || 0));
+
+    //  Build UnitsJson
+    // Nếu chưa có đơn vị nào, tạo đơn vị mặc định theo tên sản phẩm
+    const baseUnits = units.length
+      ? units
+      : [
+          {
+            name: "Cái",
+            conversion: 1,
+            price: Number(price),
+            isBase: true,
+          },
+        ];
+
+    const unitsPayload = baseUnits.map((u) => ({
+      name: u.name || "Cái",
+      conversionFactor: Number(u.conversion || 1),
+      price: Number(u.price || price),
+      isBaseUnit: Boolean(u.isBase),
+    }));
+
+    formData.append("UnitsJson", JSON.stringify(unitsPayload));
+
+    // Ảnh sản phẩm
+    if (imageFile) {
+      formData.append("ProductImageFile", imageFile);
     }
 
-    try {
-      // 1️⃣ Tạo sản phẩm
-      const formData = new FormData();
-      formData.append("ShopId", shopId);
-      formData.append("ProductName", productName.trim());
-      formData.append("Barcode", barcode || null);
-      formData.append("CategoryId", Number(categoryId));
-      formData.append("Price", Number(price));
-      formData.append("Discount", 0);
-      formData.append("Status", 1);
-      // 🧩 Đơn vị: gộp thành UnitsJson (chuẩn Mobile)
-      const baseUnitName = (this.state.baseUnit || "Cái").trim();
-      const unitsPayload = [
-        {
-          name: baseUnitName,
-          conversionFactor: 1,
-          price: sellPrice,
-          isBaseUnit: true,
-        },
-        ...this.state.units
-          .filter((u) => u.name?.trim() && Number(u.conversion) > 0)
-          .map((u) => ({
-            name: u.name.trim(),
-            conversionFactor: Number(u.conversion),
-            price: Number(u.price || sellPrice * u.conversion),
-            isBaseUnit: false,
-          })),
-      ];
-      formData.append("UnitsJson", JSON.stringify(unitsPayload));
+    // Giao dịch nhập kho (nếu cần)
+    formData.append("InventoryTransaction.Quantity", String(quantity || 0));
+    formData.append("InventoryTransaction.Price", String(cost || 0));
 
-      // 🧩 Giao dịch nhập kho (chỉ khi thêm mới)
-      if (!isEditing) {
-        const quantity = Number(this.state.quantity || 0);
-        const totalImportPrice = Number(this.state.totalImportPrice || 0);
-        formData.append("InventoryTransaction.Quantity", String(quantity));
-        formData.append("InventoryTransaction.Price", String(totalImportPrice));
-      }
+    // Gửi API
+    const res = await fetch(`${API_URL}/api/products`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
 
-      // 🧩 Ảnh sản phẩm
-      if (this.state.productImage) {
-        const file = this.state.productImage;
-        formData.append("ProductImageFile", file);
-      }
+    const data = await this.safeParse(res);
+    if (!res.ok) throw new Error(data?.message || "Lỗi tạo sản phẩm");
 
-      // 🧩 Ảnh hóa đơn nhập (nếu có)
-      if (!isEditing && this.state.invoiceFile) {
-        formData.append(
-          "InventoryTransaction.InventoryTransImageFile",
-          this.state.invoiceFile
-        );
-      }
+    alert("🎉 Tạo sản phẩm thành công!");
+    this.toggleAddModal();
+    this.ensureProducts(this.state.activeTab, true);
+  } catch (err) {
+    console.error(err);
+    alert("❌ Thêm sản phẩm thất bại: " + err.message);
+  }
+};
 
-      // 🔹 Gửi API tạo sản phẩm
-      const resProd = await fetch(`${API_URL}/api/products`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+handleUpdateProduct = async () => {
+  const token = localStorage.getItem("accessToken");
+  const {
+    selectedProduct,
+    shopId,
+    productName,
+    barcode,
+    cost,
+    price,
+    quantity,
+    categoryId,
+    isLow,
+    units,
+    imageFile,
+  } = this.state;
 
-      const prodData = await this.safeParse(resProd);
-      if (!resProd.ok) throw new Error(prodData?.message || "Lỗi tạo sản phẩm");
+  if (!selectedProduct) return;
+  const productId = selectedProduct.id;
 
-      const newProductId = prodData.productId || prodData.id;
-      console.log("✅ Product created:", newProductId);
+  try {
+    const formData = new FormData();
+    formData.append("ProductId", productId);
+    formData.append("ShopId", shopId);
+    formData.append("ProductName", productName.trim());
+    formData.append("Barcode", barcode || null);
+    formData.append("CategoryId", Number(categoryId));
+    formData.append("Price", Number(price));
+    formData.append("Cost", Number(cost || 0));
+    formData.append("Quantity", Number(quantity || 0));
+    formData.append("Status", 1);
+    formData.append("Discount", 0);
+    formData.append("IsLow", Number(isLow || 0));
 
-      // 2️⃣ Sau khi có productId → Gửi API thêm các đơn vị
-      if (units.length > 0 && newProductId) {
-        const validUnits = units.filter(
-          (u) => u.name?.trim() && (u.isBase || Number(u.conversion) > 0)
-        );
+    // 🔹 Units
+    const unitsPayload = (units.length ? units : [{
+      name: "Cái",
+      conversion: 1,
+      price: Number(price),
+      isBase: true,
+    }]).map(u => ({
+      name: u.name || "Cái",
+      conversionFactor: Number(u.conversion || 1),
+      price: Number(u.price || price),
+      isBaseUnit: Boolean(u.isBase),
+    }));
+    formData.append("UnitsJson", JSON.stringify(unitsPayload));
 
-        for (const u of validUnits) {
-          const payload = {
-            shopId,
-            unitId: u.unitId || 0,
-            conversionFactor: Number(u.conversion || 1),
-            price: Number(u.price || 0),
-            productId: newProductId,
-          };
+    if (imageFile) formData.append("ProductImageFile", imageFile);
 
-          const resUnit = await fetch(`${API_URL}/api/product-units`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-          });
+    // 🔹 Gọi API PUT
+    const res = await fetch(`${API_URL}/api/products/${productId}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
 
-          const unitData = await this.safeParse(resUnit);
-          if (!resUnit.ok)
-            console.warn(
-              "⚠️ Lỗi thêm đơn vị:",
-              unitData?.message || resUnit.status
-            );
-        }
-      }
+    const data = await this.safeParse(res);
+    if (!res.ok) throw new Error(data?.message || "Lỗi cập nhật sản phẩm");
 
-      alert("🎉 Thêm sản phẩm và đơn vị thành công!");
-      this.toggleAddModal();
-      this.ensureProducts(this.state.activeTab, true);
-    } catch (err) {
-      console.error(err);
-      alert("❌ Thêm sản phẩm thất bại: " + err.message);
-    }
-  };
+    alert("✅ Cập nhật thành công!");
+    this.closeEditModal();
+    this.ensureProducts(this.state.activeTab, true);
+  } catch (err) {
+    alert("❌ Lỗi khi cập nhật: " + err.message);
+  }
+};
 
   /* ---------- UI - Modal thêm sản phẩm ---------- */
   renderAddModal() {
@@ -638,24 +714,33 @@ class ProductPageClass extends React.Component {
                 Thông tin chi tiết
               </h3>
               <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
-                    🧋
-                  </div>
-                  <div>
-                    <p className="font-semibold">Báo hết món</p>
-                    <p className="text-sm text-gray-500">
-                      Hiển thị thông báo hết món
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  className="toggle"
-                  checked={isLow}
-                  onChange={(e) => this.setState({ isLow: e.target.checked })}
-                />
-              </div>
+  <div className="flex items-center gap-3">
+    <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
+      ⚠️
+    </div>
+    <div>
+      <p className="font-semibold">Ngưỡng cảnh báo nhập hàng</p>
+      <p className="text-sm text-gray-500">
+        Nếu tồn kho &lt; giá trị này → hệ thống gửi cảnh báo
+      </p>
+    </div>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <Input
+      type="number"
+      min="0"
+      className="w-24 text-center"
+      placeholder="VD: 5"
+      value={isLow}
+      onChange={(e) =>
+        this.setState({ isLow: Number(e.target.value) || 0 })
+      }
+    />
+    <span className="text-gray-600 text-sm">sản phẩm</span>
+  </div>
+</div>
+
               <div className="border rounded-lg p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div>
@@ -673,7 +758,7 @@ class ProductPageClass extends React.Component {
                   </Button>
                 </div>
 
-                {/* ✅ Danh sách đơn vị hiển thị sau khi cấu hình */}
+                {/*  Danh sách đơn vị hiển thị sau khi cấu hình */}
                 <div className="space-y-2">
                   {this.state.units.length === 0 ? (
                     <p className="text-gray-400 text-sm">Chưa có đơn vị</p>
@@ -730,6 +815,270 @@ class ProductPageClass extends React.Component {
       </div>
     );
   }
+
+  renderEditModal() {
+    const { categories, categoryId, productName, barcode, cost, price, isLow, quantity } = this.state;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
+      <div className="bg-white w-[1100px] h-[90vh] shadow-2xl rounded-2xl p-10 overflow-y-auto relative">
+        <button
+          onClick={this.closeEditModal}
+          className="absolute top-6 right-6 text-gray-500 hover:text-gray-800"
+        >
+          <X className="w-6 h-6" />
+        </button>
+        <h2 className="text-3xl font-extrabold text-[#007E85] mb-8">
+          ✏️ CHỈNH SỬA SẢN PHẨM
+        </h2>
+
+        <div className="grid grid-cols-2 gap-8">
+            {/* LEFT */}
+            <div className="space-y-6">
+              <div className="flex flex-col items-center">
+                <label
+                  htmlFor="imageUpload"
+                  className="w-[140px] h-[140px] rounded-xl border-2 border-dashed border-[#00A8B0] bg-[#E1FBFF] grid place-items-center text-[#00A8B0] font-semibold text-sm cursor-pointer hover:bg-[#D5F7F9] transition overflow-hidden"
+                >
+                  {this.state.imageUrl ? (
+                    <img
+                      src={this.state.imageUrl}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <>
+                      <Upload className="w-6 h-6 mb-1" />
+                      ẢNH
+                    </>
+                  )}
+                </label>
+                <input
+                  id="imageUpload"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={this.handleImageUpload}
+                />
+                <p className="text-sm text-gray-500 mt-2 text-center">
+                  Nhấn để tải ảnh lên
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold block mb-1">
+                    Tên sản phẩm <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    placeholder="Vd. Trà sữa Thái xanh"
+                    value={productName}
+                    onChange={(e) =>
+                      this.setState({ productName: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold block mb-1">Mã vạch</label>
+                  <Input
+                    placeholder="Vd. 1234567890"
+                    value={barcode}
+                    onChange={(e) => this.setState({ barcode: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold block mb-1">
+                  Phân loại <span className="text-red-500">*</span>
+                </label>
+                <select
+                  className="border rounded-md px-3 py-2 w-full"
+                  value={categoryId}
+                  onChange={(e) =>
+                    this.setState({ categoryId: Number(e.target.value) })
+                  }
+                >
+                  <option value="">-- Chọn danh mục --</option>
+                  {categories
+                    .filter((c) => c.id !== "all")
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
+                    🧋
+                  </div>
+                  <div>
+                    <p className="font-semibold">Báo hết món</p>
+                    <p className="text-sm text-gray-500">
+                      Hiển thị thông báo hết món
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  className="toggle"
+                  checked={isLow}
+                  onChange={(e) => this.setState({ isLow: e.target.checked })}
+                />
+              </div> */}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold block mb-2">
+                    Giá vốn <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Vd. 123456"
+                      value={cost}
+                      onChange={(e) => this.setState({ cost: e.target.value })}
+                    />
+                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
+                      VND
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <label className="font-semibold block mb-2">
+                    Giá bán <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Vd. 123456"
+                      value={price}
+                      onChange={(e) => this.setState({ price: e.target.value })}
+                    />
+                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
+                      VND
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold block mb-1">Số lượng</label>
+                <Input
+                  placeholder="Vd. 10"
+                  value={quantity}
+                  onChange={(e) => this.setState({ quantity: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* RIGHT */}
+            <div className="space-y-4">
+              <h3 className="font-bold text-lg text-gray-800 mb-2">
+                Thông tin chi tiết
+              </h3>
+              <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
+  <div className="flex items-center gap-3">
+    <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
+      ⚠️
+    </div>
+    <div>
+      <p className="font-semibold">Ngưỡng cảnh báo nhập hàng</p>
+      <p className="text-sm text-gray-500">
+        Nếu tồn kho &lt; giá trị này → hệ thống gửi cảnh báo
+      </p>
+    </div>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <Input
+      type="number"
+      min="0"
+      className="w-24 text-center"
+      placeholder="VD: 5"
+      value={isLow}
+      onChange={(e) =>
+        this.setState({ isLow: Number(e.target.value) || 0 })
+      }
+    />
+    <span className="text-gray-600 text-sm">sản phẩm</span>
+  </div>
+</div>
+
+              <div className="border rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="font-semibold">Đơn vị</p>
+                    <p className="text-sm text-gray-500">
+                      Thiết lập các đơn vị quy đổi
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="rounded-lg px-4 py-2 text-sm"
+                    onClick={this.toggleUnitModal}
+                  >
+                    Cấu hình
+                  </Button>
+                </div>
+
+                {/*  Danh sách đơn vị hiển thị sau khi cấu hình */}
+                <div className="space-y-2">
+                  {this.state.units.length === 0 ? (
+                    <p className="text-gray-400 text-sm">Chưa có đơn vị</p>
+                  ) : (
+                    this.state.units.map((u, idx) => (
+                      <div
+                        key={u.id}
+                        className="flex justify-between items-center bg-white border rounded-lg px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-gray-700">
+                            {u.name || "—"}
+                          </span>
+                          {u.isBase && (
+                            <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
+                              cơ bản
+                            </span>
+                          )}
+                          {!u.isBase && (
+                            <span className="text-xs text-gray-500">
+                              x{u.conversion || 1}
+                            </span>
+                          )}
+                        </div>
+                        {!u.isBase && (
+                          <span className="text-sm text-[#00A8B0] font-semibold">
+                            + {u.price ? fmt.format(u.price) : 0}đ
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        <div className="mt-8 flex justify-end gap-4">
+          <Button
+            variant="outline"
+            className="rounded-lg px-6 py-2 text-gray-600"
+            onClick={this.closeEditModal}
+          >
+            Hủy
+          </Button>
+          <Button
+            className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+            onClick={this.handleUpdateProduct}
+          >
+            Lưu thay đổi
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
   /* ---------- Unit Modal ---------- */
   renderUnitModal() {
     const { units } = this.state;
@@ -854,6 +1203,142 @@ class ProductPageClass extends React.Component {
       </div>
     );
   }
+
+renderDetailModal() {
+  const { selectedProduct } = this.state;
+  if (!selectedProduct) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
+      <div className="bg-white w-[650px] rounded-2xl shadow-2xl p-8 relative">
+        <button
+          onClick={this.closeProductDetail}
+          className="absolute top-5 right-5 text-gray-500 hover:text-gray-800"
+        >
+          <X className="w-6 h-6" />
+        </button>
+
+        <h2 className="text-2xl font-extrabold text-[#007E85] mb-6">
+          🧾 Chi tiết sản phẩm
+        </h2>
+
+        {/* Ảnh + Tên */}
+        <div className="flex items-center gap-4 mb-6">
+          <img
+            src={selectedProduct.img}
+            alt={selectedProduct.name}
+            className="w-24 h-24 rounded-lg object-cover border"
+          />
+          <div>
+            <p className="font-bold text-lg text-gray-800">
+              {selectedProduct.name}
+            </p>
+            <p className="text-sm text-gray-500">ID: {selectedProduct.id}</p>
+          </div>
+        </div>
+
+        {/* Thông tin tổng quan */}
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-gray-500">Mã vạch</p>
+            <p className="font-semibold">{selectedProduct.barcode || "—"}</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Danh mục</p>
+            <p className="font-semibold">{selectedProduct.category}</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Giá bán</p>
+            <p className="font-semibold text-[#007E85]">
+              {fmt.format(selectedProduct.price)} đ
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Giá vốn</p>
+            <p className="font-semibold">
+              {fmt.format(selectedProduct.cost || 0)} đ
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Số lượng tồn</p>
+            <p className="font-semibold">{selectedProduct.stock ?? 0}</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Ngưỡng cảnh báo</p>
+            <p className="font-semibold text-orange-600">
+              {selectedProduct.isLow ?? 0}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Giảm giá (%)</p>
+            <p className="font-semibold">{selectedProduct.discount ?? 0}</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Trạng thái</p>
+            <p
+              className={`font-semibold ${
+                selectedProduct.status === 1
+                  ? "text-green-600"
+                  : "text-red-600"
+              }`}
+            >
+              {selectedProduct.status === 1 ? "Đang hoạt động" : "Ngưng"}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Ngày tạo</p>
+            <p className="font-semibold">
+              {new Date(selectedProduct.createdAt).toLocaleString("vi-VN")}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Cập nhật</p>
+            <p className="font-semibold">
+              {new Date(selectedProduct.updatedAt).toLocaleString("vi-VN")}
+            </p>
+          </div>
+        </div>
+
+        {/* Đơn vị quy đổi */}
+        <div className="mt-6">
+          <p className="text-gray-500 mb-2 font-semibold">Đơn vị quy đổi</p>
+          <div className="flex flex-wrap gap-2">
+            {selectedProduct.unitOptions?.length > 0 ? (
+              selectedProduct.unitOptions.map((u) => (
+                <span
+                  key={u.productUnitId}
+                  className="px-3 py-1 bg-[#E1FBFF] text-[#007E85] rounded-full text-sm border"
+                >
+                  {u.unitName} (x{u.conversionFactor}) - {fmt.format(u.price)}đ
+                </span>
+              ))
+            ) : (
+              <span className="text-gray-400 text-sm">Không có</span>
+            )}
+          </div>
+        </div>
+
+        {/* Nút đóng */}
+        <div className="mt-8 flex justify-end gap-4">
+  <Button
+    onClick={this.closeProductDetail}
+    variant="outline"
+    className="px-6 py-2 rounded-lg text-gray-600"
+  >
+    Đóng
+  </Button>
+  <Button
+    onClick={this.openEditProduct}
+    className="bg-[#00A8B0] text-white px-6 py-2 rounded-lg hover:bg-[#00929A]"
+  >
+    Chỉnh sửa
+  </Button>
+</div>
+
+      </div>
+    </div>
+  );
+}
 
   /* ---------- FILTER DATA ---------- */
   getFiltered = (tabValue) => {
@@ -1025,12 +1510,19 @@ class ProductPageClass extends React.Component {
 
                             <div className="flex justify-end">
                               <Button
-                                variant="outline"
-                                className="rounded-full w-10 h-10 grid place-items-center"
+                                variant="ghost"
+                                size="icon"
+                                className="rounded-full w-10 h-10 hover:bg-[#E1FBFF] hover:text-[#007E85]"
+                                onClick={() => this.openProductDetail(p)}
                               >
-                                <span className="text-2xl">&gt;</span>
+                                <ChevronRight className="w-5 h-5" />
                               </Button>
                             </div>
+                              {p.stock <= p.isLow && (
+                              <span className="text-orange-600 text-sm font-semibold">
+                                ⚠️ Cần nhập hàng
+                              </span>
+                            )}
                           </Card>
                         ))
                       )}
@@ -1042,6 +1534,8 @@ class ProductPageClass extends React.Component {
           )}
           {showAddModal && this.renderAddModal()}
           {this.state.showUnitModal && this.renderUnitModal()}
+          {this.state.showDetailModal && this.renderDetailModal()}
+          {this.state.showEditModal && this.renderEditModal()}
         </div>
       </div>
     );
