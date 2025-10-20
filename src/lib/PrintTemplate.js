@@ -1,105 +1,112 @@
 import API_URL from "@/config/api";
 
 export default class PrintTemplate {
-  /**
-   * 🔹 Lấy thông tin cửa hàng từ localStorage (đã có khi login)
-   * Không cần gọi lại API /api/shops/:id
-   */
   static async getShopInfo() {
-    try {
-      // Ưu tiên cache trong localStorage
-      const cache = localStorage.getItem("cachedShopInfo");
-      if (cache) return JSON.parse(cache);
+  try {
+    const cached = localStorage.getItem("shopInfo");
+    if (cached) return JSON.parse(cached);
 
-      // Lấy profile khi login
-      const profile = JSON.parse(localStorage.getItem("userProfile") || "null");
-      if (!profile) throw new Error("Không tìm thấy thông tin đăng nhập.");
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const token = localStorage.getItem("accessToken");
+    if (!profile.shopId) throw new Error("Không tìm thấy shopId.");
 
-      // Tạo đối tượng shop
-      const shop = {
-        id: profile.shopId || 0,
-        name: profile.shopName || "Cửa hàng của bạn",
-        branch: profile.branchName || "",
-        address: profile.shopAddress || "Chưa có địa chỉ",
-        phone: profile.phoneNumber || "",
-        wifi: profile.wifiPassword || "",
-      };
-
-      // Lưu cache để dùng lần sau
-      localStorage.setItem("cachedShopInfo", JSON.stringify(shop));
-      return shop;
-    } catch (e) {
-      console.warn("[PrintTemplate] ⚠️ getShopInfo:", e.message);
-      return {
-        name: "Cửa hàng của bạn",
-        branch: "",
-        address: "Chưa có địa chỉ",
-        phone: "",
-        wifi: "",
-      };
-    }
-  }
-
-  /**
-   * 🔹 Tạo nội dung hóa đơn 80mm
-   */
-  static async buildReceipt(order, shop = null) {
-    if (!shop) shop = await this.getShopInfo();
-
-    const fmt = new Intl.NumberFormat("vi-VN");
-    const now = new Date();
-    const dateStr = now.toLocaleDateString("vi-VN");
-    const timeStr = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-    const line = "------------------------------------------";
-
-    let out = "";
-    out += "\n";
-    out += `           🐼 ${shop.name.toUpperCase()}\n`;
-    if (shop.branch) out += `       ${shop.branch}\n`;
-    out += `Địa chỉ: ${shop.address}\n`;
-    if (shop.phone) out += `Hotline: ${shop.phone}\n`;
-    out += "\n";
-    out += "        HÓA ĐƠN THANH TOÁN\n";
-    out += `Số HĐ: ${(order.id?.toString().padStart(6, "0")) || "000000"}\n`;
-    out += line + "\n";
-
-    out += `Ngày: ${dateStr}   Giờ: ${timeStr}\n`;
-    out += `Phương thức: ${order.method || "Tiền mặt"}\n`;
-    out += `Khách hàng: ${order.customerName || "Khách lẻ"}\n`;
-    out += line + "\n";
-
-    // Danh sách món
-    out += "STT  TÊN MÓN              SL   Đ.GIÁ   T.TIỀN\n";
-    out += line + "\n";
-    (order.items || []).forEach((it, i) => {
-      const name = (it.name || "").substring(0, 18).padEnd(18, " ");
-      const qty = String(it.qty).padStart(2, " ");
-      const price = fmt.format(it.price).padStart(7, " ");
-      const total = fmt.format(it.price * it.qty).padStart(8, " ");
-      out += `${(i + 1).toString().padEnd(3, " ")} ${name}${qty}${price}${total}\n`;
-      if (it.note) out += `     - ${it.note}\n`;
+    const res = await fetch(`${API_URL}/api/shops/${profile.shopId}`, {
+      headers: { accept: "application/json", Authorization: `Bearer ${token}` },
     });
 
-    out += line + "\n";
-    out += `Tổng cộng:            ${fmt.format(order.total)} đ\n`;
-    if (order.discount) out += `Giảm giá:             -${fmt.format(order.discount)} đ\n`;
-    out += line + "\n";
-    out += `Thành tiền:           ${fmt.format(order.total - (order.discount || 0))} đ\n`;
-    out += line + "\n";
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
 
-    // Footer
-    out += `+Thanh toán (${order.method || "Tiền mặt"})\n`;
-    if (shop.wifi) out += `PASS WIFI: ${shop.wifi}\n`;
-    out += "Nhà hàng chỉ xuất bill hóa đơn GTGT\n";
-    out += "tại thời điểm thanh toán.\n\n";
-    out += "Bills or invoices are only issued at\n";
-    out += "the time of payment.\n";
-    out += "Cảm ơn quý khách và hẹn gặp lại!\n";
-    out += "Thank you and see you again!\n";
-    out += line + "\n";
-    out += "Đối tác công nghệ: ASA POS\n";
-    out += "Powered by asa-pos.vn\n";
-    out += "\n\n\n";
-    return out;
+    const shop = {
+      id: profile.shopId,
+      name: data.shopName || "Cửa hàng của bạn",
+      branch: data.branchName || "",
+      address: data.address || "Chưa có địa chỉ",
+      phone: data.phoneNumber || "",
+      wifi: data.wifiPassword || "",
+    };
+
+    localStorage.setItem("shopInfo", JSON.stringify(shop));
+    return shop;
+  } catch (e) {
+    console.warn("[PrintTemplate] ⚠️ getShopInfo:", e.message);
+    return { name: "Cửa hàng của bạn", address: "Chưa có địa chỉ" };
   }
+}
+static async buildReceipt(order, shop = null) {
+  if (!shop) shop = await this.getShopInfo();
+
+  const fmt = new Intl.NumberFormat("vi-VN");
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("vi-VN");
+  const timeStr = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const line = "----------------------------------------";
+
+  let out = "";
+
+  // ===== HEADER =====
+  out += "\n";
+  out += `           ${shop.name.toUpperCase()}\n`;
+  out += line + "\n";
+  out += `ORDER #${String(order.id ?? "000").padStart(3, "0")}\n`;
+  out += `${shop.branch || shop.address}\n`;
+  out += `Hotline: ${shop.phone || ""}\n`;
+  out += line + "\n";
+
+  // ===== THÔNG TIN HÓA ĐƠN =====
+  const invoiceNo = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,"0")}${now.getDate().toString().padStart(2,"0")}${order.id ?? "0000"}`;
+  out += `Thời gian đặt hàng: ${dateStr} ${timeStr}\n`;
+  out += line + "\n";
+
+ // ===== DANH SÁCH SẢN PHẨM =====
+out += "Tên món\n";
+out += "                     Đ.Giá     SL     T.Tiền\n";
+out += line + "\n";
+
+(order.items || []).forEach((it) => {
+  // Dòng 1: Tên sản phẩm
+  const name = (it.name || "").substring(0, 40); // giữ tên dài tối đa 40 ký tự
+  out += `${name}\n`;
+
+  // Dòng 2: Đơn giá, SL, Tổng tiền (căn đều hai bên)
+  const price = fmt.format(it.price).padStart(10, " ");
+  const qty = String(it.qty).padStart(5, " ");
+  const total = fmt.format(it.price * it.qty).padStart(13, " ");
+  out += `Đ.Giá:${price} | SL:${qty} | ${total}\n`;
+
+  // Dòng ghi chú (nếu có)
+  if (it.note) out += `  • ${it.note}\n`;
+
+  out += line + "\n";
+});
+
+
+out += line + "\n";
+
+  // ===== TỔNG KẾT =====
+  const itemCount = (order.items || []).reduce((s, i) => s + i.qty, 0);
+  const subTotal = order.total || 0;
+  const discount = order.discount || 0;
+  const grandTotal = subTotal - discount;
+
+  out += `Tổng sản phẩm: ${itemCount}\n`;
+  out += `Tổng cộng:           ${fmt.format(subTotal)} đ\n`;
+  if (discount > 0) out += `Giảm giá:            -${fmt.format(discount)} đ\n`;
+  out += `Thành tiền:          ${fmt.format(grandTotal)} đ\n`;
+  out += line + "\n";
+  out += `Phương thức: ${order.method || "Tiền mặt"}\n`;
+
+  // ===== FOOTER =====
+  out += "\n";
+  out += `Thu ngân: ${order.cashierName || "NV001"}\n`;
+  out += `Thời gian in: ${dateStr} ${timeStr}\n`;
+  out += line + "\n";
+  out += "Cảm ơn quý khách và hẹn gặp lại!\n";
+  out += "Thank you for your purchase!\n";
+  out += "Powered by ASA POS\n";
+  out += "\n\n";
+
+  return out;
+}
+
 }
