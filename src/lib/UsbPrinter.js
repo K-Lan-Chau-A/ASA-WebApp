@@ -1,27 +1,32 @@
-import escpos from "escpos";
-escpos.USB = require("escpos-usb");
-
 export default class UsbPrinter {
-  constructor() {
-    try {
-      this.device = new escpos.USB();
-      this.printer = new escpos.Printer(this.device);
-    } catch (e) {
-      console.error("[UsbPrinter] Không tìm thấy thiết bị:", e);
-    }
+  constructor(config = {}) {
+    this.config = config;
   }
 
   async print(text) {
-    return new Promise((resolve, reject) => {
-      if (!this.device) return reject("Chưa kết nối USB printer");
-      this.device.open(() => {
-        this.printer
-          .align("ct")
-          .text(text)
-          .cut()
-          .close();
-        resolve("In thành công");
-      });
-    });
+    if (typeof window !== "undefined" && !window.process?.versions?.electron) {
+      console.warn("[UsbPrinter] Chạy trong browser, chuyển sang in trình duyệt");
+      return this._browserPrint(text);
+    }
+
+    if (window?.printer?.usbPrint) {
+      return await window.printer.usbPrint(text);
+    }
+
+    throw new Error("UsbPrinter không khả dụng trong môi trường này.");
+  }
+
+  _browserPrint(text) {
+    const html = `
+      <html><head><title>Hóa đơn</title>
+      <style>body{font-family:monospace;font-size:13px;margin:0;padding:12px;}</style>
+      </head><body>${text.replace(/\n/g,"<br/>")}</body></html>`;
+    const w = window.open("", "", "width=400,height=600");
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+    w.close();
+    return Promise.resolve("Đã in qua trình duyệt");
   }
 }

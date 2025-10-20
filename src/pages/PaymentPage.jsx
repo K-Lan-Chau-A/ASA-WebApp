@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API_URL from "@/config/api";
+import PrintService from "@/service/PrintService";
 
 const fmt = new Intl.NumberFormat("vi-VN");
 
@@ -133,6 +134,14 @@ class PaymentPageClass extends React.Component {
   });
   this.showToast("Thanh toán thành công", 1000);
     localStorage.setItem("resetCustomer", "1");
+    const order = {
+  id: this.state.displayOrderId || this.state.orderId,
+  total: this.subtotal(),
+  items: this.state.orders || [],
+};
+const shop = { name: "Kỳ Lân Châu Á", address: "Vinhomes Grand Park" };
+const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
+printer.printOrder(order).catch(console.error);
   setTimeout(() => this.props.navigate("/orders"), 800);
 };
 
@@ -599,7 +608,10 @@ class PaymentPageClass extends React.Component {
       log(`PUT submit(status=${payload.status}) → ${res.status} (${dt}ms)`, url, payload, data);
       if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
 
-      if (this.state.activeTab === "cash") this._isPaid = true;
+      if (this.state.activeTab === "cash") {
+  this._isPaid = true;
+  await this.handlePrintReceipt(); 
+}
       localStorage.setItem("lastOrderResponse", JSON.stringify({ id: targetId, ...data }));
       this.props.navigate("/orders");
     } catch (e) {
@@ -620,7 +632,18 @@ class PaymentPageClass extends React.Component {
       this.props.navigate(-1);
     }
   };
-
+/* ---------- Printer (Browser mode) ---------- */
+async handlePrintReceipt() {
+   try { 
+    const order = { id: this.state.displayOrderId || this.state.orderId, total: this.subtotal(), 
+      items: this.state.orders || [], }; 
+      const shop = { name: "Kỳ Lân Châu Á POS", address: "Vinhomes Grand Park", }; 
+      const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
+await printer.printOrder(order);
+ this.showToast("🖨️ Đã gửi lệnh in hóa đơn"); } 
+ catch (e) {
+   console.error("[Payment] Lỗi in:", e); 
+   this.showToast("⚠️ In hóa đơn thất bại", 2000); } }
   /* ---------- Computed ---------- */
   get total() { return this.subtotal(); }
   get effectiveReceived() {
@@ -637,8 +660,15 @@ class PaymentPageClass extends React.Component {
         <button onClick={this.handleBack} className="w-8 h-8 rounded-full bg-white/10 mr-3">←</button>
         <div className="text-xl font-semibold">Thanh toán</div>
         <div className="ml-auto">
-          <button className="w-10 h-10 rounded-full bg-white/10">🖨️</button>
-        </div>
+  <button
+    onClick={() => this.handlePrintReceipt()}
+    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20"
+    title="In hóa đơn"
+  >
+    🖨️
+  </button>
+</div>
+
       </div>
     );
   }

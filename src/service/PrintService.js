@@ -4,7 +4,7 @@ import PrintTemplate from "@/lib/PrintTemplate";
 
 export default class PrintService {
   constructor(mode = "lan", config = {}) {
-    // Chọn chế độ in
+    // 🔹 Chọn chế độ in
     if (mode === "usb") {
       this.driver = new UsbPrinter(config);
     } else {
@@ -12,14 +12,19 @@ export default class PrintService {
     }
   }
 
-  async printOrder(order, shop) {
-    try {
-      const text = PrintTemplate.buildReceipt(order, shop);
-      const result = await this.driver.print(text);
-      console.log("[PrintService] ✅ In thành công:", result);
-    } catch (err) {
-      console.error("[PrintService] ❌ Lỗi in:", err);
-      alert("Không thể in hóa đơn: " + err.message);
-    }
+  async printOrder(order, shop = null) {
+  try {
+    const text = await PrintTemplate.buildReceipt(order, shop);
+    localStorage.setItem("printText", text);
+
+    const printUrl = `${window.location.origin}/print/receipt.html`;
+    const w = window.open(printUrl, "_blank", "width=400,height=600");
+    if (!w) throw new Error("Không thể mở cửa sổ in");
+    console.log("[PrintService] 🧾 Mở file in:", printUrl);
+  } catch (err) {
+    console.error("[PrintService] ❌ Lỗi in:", err);
+    alert("Không thể in hóa đơn: " + (err.message || err));
   }
+}
+
 }
