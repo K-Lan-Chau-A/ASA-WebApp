@@ -1,6 +1,6 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Folder, User, Home, ShoppingBag } from "lucide-react";
+import { Folder, User, Home, ShoppingBag, Trophy, Gift } from "lucide-react";
 
 export default function Sidebar() {
   const location = useLocation();
@@ -11,6 +11,9 @@ export default function Sidebar() {
     { icon: Folder, label: "Danh mục", path: "/categories" },
     { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
     { icon: User, label: "Khách hàng", path: "/customers" },
+    { icon: Gift, label: "Voucher", path: "/vouchers" },
+    { icon: Trophy, label: "Rank", path: "/ranks" },
+    { icon: Trophy, label: "Promotion", path: "/promotions" },
   ];
 
   return (

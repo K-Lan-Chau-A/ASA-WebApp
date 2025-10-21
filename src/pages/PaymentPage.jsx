@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API_URL from "@/config/api";
-import PrintService from "@/service/PrintService";
+import PrintService from "@/services/PrintService";
 
 const fmt = new Intl.NumberFormat("vi-VN");
 

@@ -1,3 +1,5 @@
+
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
 import LoginPage from './pages/LoginPage';
 import OrdersPage from './pages/OrdersPage';
 import OpenShiftPage from './pages/OpenShiftPage';
@@ -5,8 +7,9 @@ import PaymentPage from './pages/PaymentPage';
 import ProductPage from './pages/ProductPage';
 import CategoryPage from './pages/CategoryPage';
 import CustomerPage from './pages/CustomerPage';
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
-
+import VoucherPage from './pages/VoucherPage';
+import RankPage from './pages/RankPage';
+import PromotionPage from './pages/PromotionPage';
 
 export default function App() {
   return (
@@ -23,6 +26,9 @@ export default function App() {
             <Route path="/products" element={<ProductPage />} />
             <Route path="/categories" element={<CategoryPage />} />
             <Route path="/customers" element={<CustomerPage />} />
+            <Route path="/vouchers" element={<VoucherPage />} />
+            <Route path="/ranks" element={<RankPage />} />
+            <Route path="/promotions" element={<PromotionPage />} />
           </Routes>
         </main>
 
