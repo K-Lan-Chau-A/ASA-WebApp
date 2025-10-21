@@ -58,30 +58,28 @@ static async buildReceipt(order, shop = null) {
   out += `Thời gian đặt hàng: ${dateStr} ${timeStr}\n`;
   out += line + "\n";
 
- // ===== DANH SÁCH SẢN PHẨM =====
+// ===== DANH SÁCH SẢN PHẨM =====
 out += "Tên món\n";
-out += "                     Đ.Giá     SL     T.Tiền\n";
+out += "   Đ.Giá           SL        T.Tiền\n";
 out += line + "\n";
 
 (order.items || []).forEach((it) => {
-  // Dòng 1: Tên sản phẩm
-  const name = (it.name || "").substring(0, 40); // giữ tên dài tối đa 40 ký tự
+  // 🧾 Dòng 1: Tên sản phẩm
+  const name = (it.name || "").substring(0, 32); // vừa khổ 80mm
   out += `${name}\n`;
 
-  // Dòng 2: Đơn giá, SL, Tổng tiền (căn đều hai bên)
-  const price = fmt.format(it.price).padStart(10, " ");
-  const qty = String(it.qty).padStart(5, " ");
-  const total = fmt.format(it.price * it.qty).padStart(13, " ");
-  out += `Đ.Giá:${price} | SL:${qty} | ${total}\n`;
+  // 💰 Dòng 2: Giá - SL - Tổng
+  const price = fmt.format(it.price).padStart(8, " ");
+  const qty = String(it.qty).padStart(4, " ");
+  const total = fmt.format(it.price * it.qty).padStart(10, " ");
+  out += `${price}       x${qty}   =${total}\n`;
 
-  // Dòng ghi chú (nếu có)
+  // 📝 Dòng ghi chú (nếu có)
   if (it.note) out += `  • ${it.note}\n`;
 
   out += line + "\n";
 });
 
-
-out += line + "\n";
 
   // ===== TỔNG KẾT =====
   const itemCount = (order.items || []).reduce((s, i) => s + i.qty, 0);

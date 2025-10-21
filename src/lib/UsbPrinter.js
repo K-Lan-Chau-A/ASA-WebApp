@@ -1,3 +1,4 @@
+
 export default class UsbPrinter {
   constructor(config = {}) {
     this.config = config;
