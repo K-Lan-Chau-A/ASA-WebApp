@@ -10,6 +10,7 @@ import CustomerPage from './pages/CustomerPage';
 import VoucherPage from './pages/VoucherPage';
 import RankPage from './pages/RankPage';
 import PromotionPage from './pages/PromotionPage';
+import UserFeaturePage from './pages/UserFeaturePage';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
             <Route path="/vouchers" element={<VoucherPage />} />
             <Route path="/ranks" element={<RankPage />} />
             <Route path="/promotions" element={<PromotionPage />} />
+            <Route path="/user-features" element={<UserFeaturePage />} />
           </Routes>
         </main>
 

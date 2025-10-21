@@ -14,6 +14,7 @@ export default function Sidebar() {
     { icon: Gift, label: "Voucher", path: "/vouchers" },
     { icon: Trophy, label: "Rank", path: "/ranks" },
     { icon: Trophy, label: "Promotion", path: "/promotions" },
+    { icon: User, label: "User Features", path: "/user-features" },
   ];
 
   return (
