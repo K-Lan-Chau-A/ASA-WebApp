@@ -104,7 +104,28 @@ export default class PrintTemplate {
       out += `Giảm giá:            -${fmt.format(discount)} đ\n`;
     out += `Thành tiền:          ${fmt.format(grandTotal)} đ\n`;
     out += line + "\n";
-    out += `Phương thức: ${order.method || "Tiền mặt"}\n`;
+    const payLabel =
+  order.method === "cash"
+    ? "TIỀN MẶT"
+    : order.method === "qr"
+    ? "CHUYỂN KHOẢN"
+    : order.method === "nfc"
+    ? "NFC"
+    : order.method === "atm"
+    ? "ATM"
+    : "KHÁC";
+
+out += `Phương thức: ${payLabel}\n`;
+
+if (order.method === "cash") {
+  const received =
+    order.received != null ? order.received : order.total;
+  const change =
+    order.change != null ? order.change : Math.max(0, received - order.total);
+
+  out += `Tiền khách đưa:     ${fmt.format(received)} đ\n`;
+  out += `Tiền thừa:          ${fmt.format(change)} đ\n`;
+}
 
     // ===== FOOTER =====
     out += "\n";

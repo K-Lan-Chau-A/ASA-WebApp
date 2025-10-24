@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API_URL from "@/config/api";
 import PrintService from "@/services/PrintService";
+import { toast } from "@/components/ui/use-toast";
+
 
 const fmt = new Intl.NumberFormat("vi-VN");
 
@@ -132,13 +134,28 @@ class PaymentPageClass extends React.Component {
     foundCustomer: null,
     payMethodId: null,
   });
-  this.showToast("Thanh toán thành công", 1000);
+  this.stoast({
+  title: "✅ Thanh toán thành công!",
+  description: "Đơn hàng đã được lưu và in hóa đơn.",
+  duration: 3000,
+});
+
     localStorage.setItem("resetCustomer", "1");
     const order = {
   id: this.state.displayOrderId || this.state.orderId,
   total: this.subtotal(),
   items: this.state.orders || [],
+  method: this.state.activeTab,
+  received:
+    this.state.activeTab === "cash"
+      ? (this.state.received > 0 ? this.state.received : this.subtotal())
+      : null,
+  change:
+    this.state.activeTab === "cash"
+      ? Math.max(0, (this.state.received || this.subtotal()) - this.subtotal())
+      : null,
 };
+
 const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
 printer.printOrder(order, shop).catch(console.error);
   setTimeout(() => this.props.navigate("/orders"), 800);
@@ -540,6 +557,23 @@ printer.printOrder(order, shop).catch(console.error);
     else if (this.state.activeTab === "qr") this.initQRFlow();
   }
 
+  handleQuick = (value) => {
+  this.setState((prev) => ({
+    received: Number(prev.received || 0) + Number(value || 0),
+  }));
+};
+
+keyIn = (val) => {
+  const cur = String(this.state.received || "");
+  this.setState({ received: Number(cur + String(val)) });
+};
+
+keyBackspace = () => {
+  const cur = String(this.state.received || "");
+  this.setState({ received: Number(cur.slice(0, -1)) || 0 });
+};
+
+
   /* ---------- Tab click ---------- */
   setActiveTab = (tab) => {
     this.setState({ activeTab: tab });
@@ -633,12 +667,20 @@ printer.printOrder(order, shop).catch(console.error);
   };
 /* ---------- Printer (Browser mode) ---------- */
 async handlePrintReceipt() {
-  try {
-    const order = {
-      id: this.state.displayOrderId || this.state.orderId,
-      total: this.subtotal(),
-      items: this.state.orders || [],
-    };
+  try {const order = {
+  id: this.state.displayOrderId || this.state.orderId,
+  total: this.subtotal(),
+  items: this.state.orders || [],
+  method: this.state.activeTab,
+  received:
+    this.state.activeTab === "cash"
+      ? (this.state.received > 0 ? this.state.received : this.subtotal())
+      : null,
+  change:
+    this.state.activeTab === "cash"
+      ? Math.max(0, (this.state.received || this.subtotal()) - this.subtotal())
+      : null,
+};
 
     // 🔹 Lấy shopInfo thật từ localStorage hoặc API
     const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
