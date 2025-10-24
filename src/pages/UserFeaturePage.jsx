@@ -8,6 +8,12 @@ import { Card } from "@/components/ui/card";
 import API_URL from "@/config/api";
 import { getAuthToken, getShopId } from "@/services/AuthStore";
 
+// 🧩 DEBUG CONFIG — bật/tắt log
+const DEBUG = true;
+const log  = (...a) => DEBUG && console.log("%c[UserFeature]%c", "color:#00A8B0;font-weight:700", "color:inherit", ...a);
+const warn = (...a) => DEBUG && console.warn("%c[UserFeature]%c ⚠", "color:#FF914D;font-weight:700", "color:inherit", ...a);
+const err  = (...a) => console.error("%c[UserFeature]%c ❌", "color:#FF4444;font-weight:700", "color:inherit", ...a);
+
 export default class UserFeaturePage extends React.Component {
   state = {
     users: [],
@@ -21,68 +27,58 @@ export default class UserFeaturePage extends React.Component {
 
   async componentDidMount() {
     await this.loadUsers();
-    await this.loadFeatures();
   }
 
-  // ============ API ==============
+  // ================= API =================
   async loadUsers() {
     try {
       this.setState({ loading: true });
       const token = await getAuthToken();
       const shopId = await getShopId();
-      if (!token || !shopId) return;
+      if (!token || !shopId) return warn("Thiếu token hoặc shopId!");
 
       const res = await fetch(`${API_URL}/api/users?ShopId=${shopId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const json = await res.json();
-      const users = (json.items || json.data?.items || []).filter(
-        (u) => Number(u.role) === 2
-      );
+      const json = await res.json().catch(() => null);
+      const users = (json?.items || json?.data?.items || []).filter(u => Number(u.role) === 2);
       this.setState({ users });
+      log("👥 Loaded users:", users.length);
     } catch (e) {
-      console.error("[loadUsers] error:", e);
+      err("loadUsers:", e);
     } finally {
       this.setState({ loading: false });
     }
   }
 
-  async loadFeatures() {
+  // ✅ Load features riêng cho từng userId
+  async loadUserFeatures(user) {
     try {
+      if (!user?.userId) return warn("userId invalid!");
+      this.setState({ loading: true, selectedUser: user, features: [], userFeatures: {} });
       const token = await getAuthToken();
-      const shopId = await getShopId();
-      if (!token || !shopId) return;
-
-      const res = await fetch(`${API_URL}/api/feature?ShopId=${shopId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json();
-      const features = json.items || json.data?.items || [];
-      this.setState({ features });
-    } catch (e) {
-      console.error("[loadFeatures] error:", e);
-    }
-  }
-
-  async loadUserFeatures(userId) {
-    try {
-      this.setState({ loading: true, selectedUser: { userId } });
-      const token = await getAuthToken();
-      if (!token || !userId) return;
 
       const res = await fetch(
-        `${API_URL}/api/userfeature?UserId=${userId}&page=1&pageSize=100`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        `${API_URL}/api/userfeature?UserId=${user.userId}&page=1&pageSize=100`,
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-      const json = await res.json();
-      const items = json.items || json.data?.items || [];
+
+      const json = await res.json().catch(() => null);
+      const items = json?.items || json?.data?.items || [];
+
+      // ✅ Tách riêng thành 2 mảng: features & userFeatures map
+      const features = items.map(f => ({
+        featureId: f.featureId,
+        featureName: f.featureName,
+      }));
+
       const map = {};
       for (const f of items) map[f.featureId] = !!f.isEnabled;
-      this.setState({ userFeatures: map });
+
+      this.setState({ features, userFeatures: map });
+      log(`🔑 Loaded ${items.length} features for ${user.username}`);
     } catch (e) {
-      console.error("[loadUserFeatures] error:", e);
+      err("loadUserFeatures:", e);
     } finally {
       this.setState({ loading: false });
     }
@@ -91,17 +87,18 @@ export default class UserFeaturePage extends React.Component {
   async saveUserFeatures() {
     try {
       const { selectedUser, userFeatures } = this.state;
-      if (!selectedUser?.userId) return;
-
+      if (!selectedUser?.userId) return alert("Chưa chọn nhân viên!");
       this.setState({ saving: true });
+
       const token = await getAuthToken();
       const payload = {
         userId: selectedUser.userId,
-        features: Object.keys(userFeatures).map((id) => ({
+        features: Object.keys(userFeatures).map(id => ({
           featureId: Number(id),
-          isEnable: userFeatures[id],
+          isEnable: Boolean(userFeatures[id]), // ✅ đúng format PUT
         })),
       };
+      log("💾 Saving user features:", payload);
 
       const res = await fetch(`${API_URL}/api/userfeature`, {
         method: "PUT",
@@ -112,20 +109,23 @@ export default class UserFeaturePage extends React.Component {
         body: JSON.stringify(payload),
       });
 
+      const text = await res.text().catch(() => "");
       if (res.ok) {
-        alert("✅ Cập nhật quyền thành công!");
+        alert("✅ Quyền đã được cập nhật!");
+        log("✅ Response:", text);
       } else {
-        alert("❌ Lưu thất bại, vui lòng thử lại.");
+        warn("⚠ Lỗi API:", res.status, text);
+        alert("❌ Cập nhật thất bại, vui lòng thử lại.");
       }
     } catch (e) {
-      console.error("[saveUserFeatures] error:", e);
-      alert("Đã có lỗi xảy ra.");
+      err("saveUserFeatures:", e);
+      alert("Đã xảy ra lỗi khi lưu quyền.");
     } finally {
       this.setState({ saving: false });
     }
   }
 
-  // ============ Render ==============
+  // ================= UI =================
   renderHeader() {
     const { search } = this.state;
     return (
@@ -134,6 +134,7 @@ export default class UserFeaturePage extends React.Component {
           <Shield className="w-7 h-7 text-[#00A8B0]" />
           Quản lý quyền nhân viên
         </h1>
+
         <div className="flex items-center space-x-3">
           <div className="relative">
             <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
@@ -157,20 +158,20 @@ export default class UserFeaturePage extends React.Component {
 
   renderUserList() {
     const { users, search, selectedUser } = this.state;
-    const filtered = users.filter((u) => {
-      const q = search.toLowerCase();
-      return (
-        u.fullName?.toLowerCase().includes(q) ||
-        u.username?.toLowerCase().includes(q)
-      );
-    });
+    const q = search.trim().toLowerCase();
+
+    const filtered = users.filter((u) =>
+      [u.fullName, u.username, u.phoneNumber]
+        .filter(Boolean)
+        .some((v) => v.toLowerCase().includes(q))
+    );
 
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 mb-10">
         {filtered.map((u) => (
           <Card
             key={u.userId}
-            onClick={() => this.loadUserFeatures(u.userId)}
+            onClick={() => this.loadUserFeatures(u)}
             className={`cursor-pointer transition-all duration-300 p-5 rounded-2xl border-2 hover:shadow-md ${
               selectedUser?.userId === u.userId
                 ? "border-[#00A8B0] bg-[#E1FBFF]"
@@ -179,7 +180,7 @@ export default class UserFeaturePage extends React.Component {
           >
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-full bg-[#00A8B0]/10 flex items-center justify-center text-[#00A8B0] font-bold text-lg">
-                {u.fullName?.[0] || u.username?.[0]}
+                {u.fullName?.[0] || u.username?.[0] || "?"}
               </div>
               <div>
                 <p className="font-semibold text-gray-800">
@@ -192,6 +193,12 @@ export default class UserFeaturePage extends React.Component {
             </div>
           </Card>
         ))}
+
+        {!filtered.length && (
+          <p className="col-span-full text-center text-gray-500 mt-6">
+            Không tìm thấy nhân viên phù hợp.
+          </p>
+        )}
       </div>
     );
   }
@@ -247,7 +254,7 @@ export default class UserFeaturePage extends React.Component {
           <Button
             variant="outline"
             className="rounded-lg px-6 py-2 text-gray-600"
-            onClick={() => this.setState({ selectedUser: null })}
+            onClick={() => this.setState({ selectedUser: null, userFeatures: {}, features: [] })}
           >
             Đóng
           </Button>
@@ -257,10 +264,18 @@ export default class UserFeaturePage extends React.Component {
   }
 
   render() {
+    const { loading } = this.state;
+
     return (
       <div className="flex h-screen w-screen overflow-hidden">
         <Sidebar />
         <div className="flex-1 bg-gradient-to-r from-[#EAFDFC] via-[#F7E7CE] to-[#E0F7FA] p-10 overflow-y-auto relative">
+          {loading && (
+            <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-20 text-[#007E85] font-semibold text-lg">
+              Đang tải dữ liệu...
+            </div>
+          )}
+
           {this.renderHeader()}
           {this.renderUserList()}
           {this.renderFeatureList()}
