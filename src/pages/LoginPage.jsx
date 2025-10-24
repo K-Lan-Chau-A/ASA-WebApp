@@ -58,7 +58,8 @@ export default function LoginPage() {
         JSON.stringify({ shiftId, openedAt: new Date().toISOString() })
       );
 
-      const up = JSON.parse(localStorage.getItem("userProfile") || "null") || {};
+      const up =
+        JSON.parse(localStorage.getItem("userProfile") || "null") || {};
       localStorage.setItem("userProfile", JSON.stringify({ ...up, shiftId }));
     }
   };
@@ -90,7 +91,8 @@ export default function LoginPage() {
       });
 
       const data = await safeParse(res);
-      if (!res.ok) throw new Error(data?.message || "Không thể lấy ca gần nhất");
+      if (!res.ok)
+        throw new Error(data?.message || "Không thể lấy ca gần nhất");
 
       const items = Array.isArray(data?.items) ? data.items : [];
       return items[0] || null;
@@ -139,23 +141,55 @@ export default function LoginPage() {
             setLoading(false);
             return;
           }
+          // 🔹 Lưu thông tin cửa hàng (phục vụ in hóa đơn)
+          try {
+            const resShop = await fetch(
+              `${API_URL}/api/shops?ShopId=${shopId}`,
+              {
+                headers: {
+                  Accept: "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+              }
+            );
+
+            const shopData = await resShop.json();
+            const shopRaw = Array.isArray(shopData?.items)
+              ? shopData.items[0]
+              : null;
+
+            if (resShop.ok && shopRaw) {
+              const shop = {
+                id: shopRaw.shopId,
+                name: shopRaw.shopName || "Cửa hàng của bạn",
+                branch: shopRaw.branchName || "",
+                address: shopRaw.address || "Chưa có địa chỉ",
+                phone: shopRaw.phoneNumber || "",
+                wifi: shopRaw.wifiPassword || "",
+                qrcode: shopRaw.qrcodeUrl || "",
+              };
+              localStorage.setItem("shopInfo", JSON.stringify(shop));
+              console.log("[Login] ✅ Saved shopInfo:", shop);
+            } else {
+              console.warn(
+                "[Login] ❌ Không thể lấy shop info:",
+                shopData?.message || "Không có dữ liệu trong items"
+              );
+            }
+          } catch (e) {
+            console.warn("[Login] ⚠️ Lỗi khi lấy shopInfo:", e.message);
+          }
 
           // 🔍 Check ca gần nhất
           const lastShift = await fetchLastShiftByShop(shopId, token);
-
           if (lastShift && Number(lastShift.status) === 1) {
-            // ✅ Có ca đang mở
             const shiftId =
               lastShift?.shiftId ?? lastShift?.id ?? lastShift?.shift?.id;
-            console.log("[Login] Found open shift:", shiftId);
             persistAuth({ token, profile, shiftId });
             navigate("/orders");
           } else {
-            // ❌ Không có ca đang mở → chuyển sang mở ca
-            console.log("[Login] No open shift → go to open-shift");
             navigate("/open-shift");
           }
-
           return;
         } else {
           const msg =
@@ -231,7 +265,11 @@ export default function LoginPage() {
                   onClick={() => setShowPw((s) => !s)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
                 >
-                  {showPw ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  {showPw ? (
+                    <EyeOff className="h-5 w-5" />
+                  ) : (
+                    <Eye className="h-5 w-5" />
+                  )}
                 </button>
               </div>
 
