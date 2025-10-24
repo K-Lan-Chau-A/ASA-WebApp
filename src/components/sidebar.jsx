@@ -1,22 +1,32 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Folder, User, Home, ShoppingBag, Trophy, Gift } from "lucide-react";
+import {
+  Home,
+  BarChart2,
+  Folder,
+  ShoppingBag,
+  Users,
+  Gift,
+  Medal,
+  Tag,
+  UserCog,
+} from "lucide-react";
 
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
 
   const navItems = [
-    { icon: Home, label: "Trang chủ", path: "/orders" },
-    { icon: Folder, label: "Danh mục", path: "/categories" },
-    { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
-    { icon: User, label: "Khách hàng", path: "/customers" },
-    { icon: Gift, label: "Voucher", path: "/vouchers" },
-    { icon: Trophy, label: "Rank", path: "/ranks" },
-    { icon: Trophy, label: "Promotion", path: "/promotions" },
-    { icon: User, label: "User Features", path: "/user-features" },
-    { icon: Home, label: "Dashboard", path: "/dashboard" },
-  ];
+  { icon: Home, label: "Trang chủ", path: "/orders" },
+  { icon: BarChart2, label: "Dashboard", path: "/dashboard" },
+  { icon: Folder, label: "Danh mục", path: "/categories" },
+  { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
+  { icon: Users, label: "Khách hàng", path: "/customers" },
+  { icon: Gift, label: "Voucher", path: "/vouchers" },
+  { icon: Medal, label: "Rank", path: "/ranks" },
+  { icon: Tag, label: "Promotion", path: "/promotions" },
+  { icon: UserCog, label: "User Features", path: "/user-features" },
+];
 
   return (
     <div className="h-screen w-[90px] bg-[#161B22] flex flex-col items-center py-8 space-y-6 rounded-r-3xl relative overflow-visible">

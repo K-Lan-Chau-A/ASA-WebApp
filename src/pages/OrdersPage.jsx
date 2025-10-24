@@ -960,7 +960,13 @@ handleNotificationClick = (id) => {
 
 submitOrder = async () => {
   this.setState({ loading: true, error: "" });
-
+// 🔍 Kiểm tra trạng thái ca làm việc
+  const currentShift = JSON.parse(localStorage.getItem("currentShift") || "{}");
+  if (currentShift?.status === "closed") {
+    alert("⚠️ Ca làm việc hiện tại đã đóng. Vui lòng mở ca mới trước khi tạo đơn hàng!");
+    this.setState({ loading: false });
+    return;
+  }
   const token = localStorage.getItem("accessToken") || "";
   const payload = this.buildOrderPayload();
 
@@ -1046,7 +1052,7 @@ submitOrder = async () => {
           {/* LEFT */}
           <div className="w-1/2 flex flex-col min-h-0">
             <div className="flex items-center justify-between px-4 py-3 mb-2">
-              <button className="px-5 py-2 bg-white text-black rounded-[15px] font-semibold -ml-4">Bán hàng</button>
+              <button className="px-5 py-2 bg-white text-black rounded-[15px] font-semibold">Bán hàng</button>
               <div className="relative w-1/2 ml-[4px]">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#DCDCDC]" />
                 <Input
@@ -1159,7 +1165,7 @@ submitOrder = async () => {
 
           {/* RIGHT */}
           <div className="w-1/2 flex flex-col">
-            <div className="mb-2 rounded-t-2xl bg-[#07323b] px-3 sm:px-4 py-2 flex items-center justify-between ">
+            <div className="flex items-center justify-between px-4 py-3 mb-2">
               <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pr-2 custom-scrollbar">
                 {invoices.map((inv, i) => {
                   const active = i === activeIdx;
