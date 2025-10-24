@@ -139,7 +139,6 @@ class PaymentPageClass extends React.Component {
   total: this.subtotal(),
   items: this.state.orders || [],
 };
-const shop = { name: "Kỳ Lân Châu Á", address: "Vinhomes Grand Park" };
 const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
 printer.printOrder(order, shop).catch(console.error);
   setTimeout(() => this.props.navigate("/orders"), 800);
@@ -634,16 +633,30 @@ printer.printOrder(order, shop).catch(console.error);
   };
 /* ---------- Printer (Browser mode) ---------- */
 async handlePrintReceipt() {
-   try { 
-    const order = { id: this.state.displayOrderId || this.state.orderId, total: this.subtotal(), 
-      items: this.state.orders || [], }; 
-      const shop = { name: "Kỳ Lân Châu Á POS", address: "Vinhomes Grand Park", }; 
-      const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
-await printer.printOrder(order, shop);
- this.showToast("🖨️ Đã gửi lệnh in hóa đơn"); } 
- catch (e) {
-   console.error("[Payment] Lỗi in:", e); 
-   this.showToast("⚠️ In hóa đơn thất bại", 2000); } }
+  try {
+    const order = {
+      id: this.state.displayOrderId || this.state.orderId,
+      total: this.subtotal(),
+      items: this.state.orders || [],
+    };
+
+    // 🔹 Lấy shopInfo thật từ localStorage hoặc API
+    const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
+    const shop = await PrintTemplate.getShopInfo();
+
+    const printer = new (await import("@/services/PrintService")).default(
+      "lan",
+      { ip: "192.168.1.107", port: 9100 }
+    );
+
+    await printer.printOrder(order, shop);
+    this.showToast("🖨️ Đã gửi lệnh in hóa đơn");
+  } catch (e) {
+    console.error("[Payment] Lỗi in:", e);
+    this.showToast("⚠️ In hóa đơn thất bại", 2000);
+  }
+}
+
   /* ---------- Computed ---------- */
   get total() { return this.subtotal(); }
   get effectiveReceived() {
