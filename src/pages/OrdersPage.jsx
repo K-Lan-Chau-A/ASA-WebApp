@@ -1,6 +1,7 @@
 
 import React from "react";
 import { useNavigate } from "react-router-dom";
+import { toast, useToast } from "@/components/ui/use-toast";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import {
   AlertCircle, Bell, ChevronDown, Menu, Printer, Volume2,
   Trash2, X, CheckCircle 
 } from "lucide-react";
+import PrintService from "@/services/PrintService";
 
 const DEBUG = true;
 const tlog = (ns) => (msg, ...rest) =>
@@ -92,110 +94,169 @@ class OrdersPageClass extends React.Component {
   showNotifications: false, 
   unreadCount: 0,
   };
+showPopup = (title, message, type = "info") => {
+  const toastFn = this.props.toast; // đổi tên để tránh trùng
+  if (!toastFn) return alert(`${title}\n${message}`); // fallback
 
-  mounted = false;
+  const colorMap = {
+    info: "#00A8B0",
+    success: "#22c55e",
+    error: "#ef4444",
+    warning: "#eab308",
+  };
 
-  /* ===================== LIFECYCLE ===================== */
-  componentDidMount() {
-    this.mounted = true;
-    logApp("OrdersPage mounted");
-document.addEventListener("click", this.handleOutsideClick);
-
-    // 🚀 Kết nối SignalR ngay khi vào trang
-if (hubConnection.state === "Disconnected") {
-  hubConnection
-    .start()
-    .then(() => {
-      const hubUrl = hubConnection?.connection?.baseUrl || import.meta.env.VITE_API_URL;
-      const connectionId = hubConnection?.connectionId || "(unknown)";
-      console.groupCollapsed("%c[SignalR]%c Connected!", "color:#22d3ee;font-weight:700", "color:inherit");
-      console.log("✅ URL:", hubUrl);
-      console.log("🔗 ConnectionId:", connectionId);
-      console.log("📡 State:", hubConnection.state);
-      console.groupEnd();
-
-      hubConnection.on("ReceiveNotification", (msg) => {
-  console.groupCollapsed(
-    "%c[SignalR]%c ReceiveNotification",
-    "color:#22d3ee;font-weight:700",
-    "color:inherit"
-  );
-  console.log("🔔 Raw message:", msg);
-  console.groupEnd();
-
-  if (!this.mounted) return;
-
-  const n = {
-  id: msg.notificationId || msg.id || Date.now(),
-  title: msg.title || "Thông báo",
-  text: msg.content || msg.message || (typeof msg === "string" ? msg : "Không có nội dung"),
-  read: false,
-  createdAt: msg.createdAt || new Date().toISOString(), 
-  type: msg.type ?? 0,
+  toastFn({
+    title: title || "Thông báo",
+    description: message,
+    duration: 3000, // ⏱️ tự động ẩn sau 3s
+    style: {
+      borderLeft: `4px solid ${colorMap[type] || colorMap.info}`,
+      padding: "12px 16px",
+      background: "white",
+      borderRadius: "8px",
+    },
+  });
 };
 
 
+  mounted = false;
+
+  /* ===================== LIFECYCLE (TỐI ƯU HÓA) ===================== */
+componentDidMount() {
+  this.mounted = true;
+  logApp("OrdersPage mounted");
+
+  document.addEventListener("click", this.handleOutsideClick);
+
+  // 🚀 Kết nối SignalR chỉ khi chưa có kết nối
+  if (hubConnection.state === "Disconnected") {
+    hubConnection.start().then(() => {
+      console.groupCollapsed("%c[SignalR]%c Connected!", "color:#22d3ee;font-weight:700", "color:inherit");
+      console.log("🔗 ConnectionId:", hubConnection?.connectionId);
+      console.groupEnd();
+
+      // Nhận thông báo mới
+      hubConnection.on("ReceiveNotification", (msg) => this.handleIncomingNotification(msg));
+    }).catch((err) => console.error("[SignalR] Connection error:", err));
+  }
+
+  // 🔑 Kiểm tra token và shopId
+  const token = localStorage.getItem("accessToken");
+  if (!token) return this.props.navigate("/");
+
+  let profile = null;
+  try {
+    profile =
+      JSON.parse(localStorage.getItem("userProfile") || "null") ||
+      JSON.parse(localStorage.getItem("auth") || "null")?.profile || null;
+  } catch {}
+  const shopId = Number(profile?.shopId || 0);
+  if (!shopId) {
+    this.setState({ authErr: "Không tìm thấy shopId trong hồ sơ người dùng." });
+    return;
+  }
+
+  // 📦 Nếu có state đã cache, khôi phục lại (để không load lại API)
+  const cachedState = localStorage.getItem("cachedOrdersPage");
+  if (cachedState) {
+    try {
+      const parsed = JSON.parse(cachedState);
+      this.setState({ ...parsed, shopId }, () => {
+        logApp("✅ Restored cached OrdersPage state");
+        // Dù có cache, vẫn refresh nền để cập nhật dữ liệu mới nhất
+        this.refreshInBackground();
+      });
+      return; // dừng ở đây, không gọi lại toàn bộ API
+    } catch (e) {
+      console.warn("⚠️ Lỗi khi parse cache:", e);
+    }
+  }
+
+  // 🆕 Nếu chưa có cache → gọi API lần đầu
+  this.setState({ shopId }, async () => {
+    await Promise.all([
+      this.fetchUnitsAllByShop(),
+      this.fetchAllProductsOnce(),
+      this.fetchNotifications(),
+    ]);
+    logApp("✅ Initial load complete");
+  });
+}
+
+componentWillUnmount() {
+  this.mounted = false;
+  document.removeEventListener("click", this.handleOutsideClick);
+
+  // 💾 Cache lại toàn bộ state (trừ loading)
+  const cacheData = {
+    invoices: this.state.invoices,
+    activeIdx: this.state.activeIdx,
+    categories: this.state.categories,
+    productsByTab: this.state.productsByTab,
+    allProducts: this.state.allProducts,
+    unitsByPid: this.state.unitsByPid,
+    foundCustomer: this.state.foundCustomer,
+    customerSearch: this.state.customerSearch,
+    notifications: this.state.notifications,
+    unreadCount: this.state.unreadCount,
+    activeTab: this.state.activeTab,
+    search: this.state.search,
+  };
+  localStorage.setItem("cachedOrdersPage", JSON.stringify(cacheData));
+  logApp("💾 OrdersPage state cached");
+}
+
+refreshInBackground = async () => {
+  logApp("🔄 Background refresh start...");
+  try {
+    const [products, units, notifs] = await Promise.allSettled([
+      this.fetchAllProductsOnce(),
+      this.fetchUnitsAllByShop(),
+      this.fetchNotifications(),
+    ]);
+
+    if (products.status === "fulfilled") {
+      localStorage.setItem("cachedProducts", JSON.stringify(this.state.allProducts));
+    }
+    if (units.status === "fulfilled") {
+      localStorage.setItem("cachedUnits", JSON.stringify(this.state.unitsByPid));
+    }
+    if (notifs.status === "fulfilled") {
+      localStorage.setItem("cachedNotifications", JSON.stringify(this.state.notifications));
+    }
+
+    logApp("✅ Background refresh complete");
+  } catch (err) {
+    console.warn("⚠️ Background refresh failed:", err);
+  }
+};
+
+/* ===================== XỬ LÝ SIGNALR THÔNG BÁO ===================== */
+handleIncomingNotification = (msg) => {
+  if (!this.mounted) return;
+
+  const n = {
+    id: msg.notificationId || msg.id || Date.now(),
+    title: msg.title || "Thông báo",
+    text: msg.content || msg.message || "Không có nội dung",
+    read: false,
+    createdAt: msg.createdAt || new Date().toISOString(),
+    type: msg.type ?? 0,
+  };
+
   this.setState((prev) => {
-    // Kiểm tra trùng id (tránh double insert nếu backend phát lại)
     const exists = prev.notifications.some((x) => x.id === n.id);
     if (exists) return prev;
-
     const updatedList = [n, ...prev.notifications];
     const updatedUnread = prev.unreadCount + 1;
-
-    console.log("🆕 New notification added:", n);
-
+    localStorage.setItem("cachedNotifications", JSON.stringify(updatedList));
     return {
       notifications: updatedList,
       unreadCount: updatedUnread,
     };
   });
-});
+};
 
-    })
-    .catch((err) => console.error("[SignalR] Connection error:", err));
-}
-
-
-if (localStorage.getItem("resetCustomer") === "1") {
-    this.clearCustomer();
-    localStorage.removeItem("resetCustomer");
-  }
-    const token = localStorage.getItem("accessToken");
-    if (!token) return this.props.navigate("/");
-
-    let profile = null;
-    try {
-      profile =
-        JSON.parse(localStorage.getItem("userProfile") || "null") ||
-        JSON.parse(localStorage.getItem("auth") || "null")?.profile ||
-        null;
-    } catch {}
-    const sId = Number(profile?.shopId);
-    if (!sId) {
-      this.setState({ authErr: "Không tìm thấy shopId trong hồ sơ người dùng." });
-      return;
-    }
-    
-    const saved = localStorage.getItem("selectedCustomer");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        this.setState({ foundCustomer: parsed, customerSearch: parsed.phone });
-      } catch {}
-    }
-
-    this.setState({ shopId: sId }, () => {
-      this.fetchUnitsAllByShop();
-      this.fetchAllProductsOnce();
-      this.fetchNotifications();
-    });
-  }
-
-  componentWillUnmount() {
-    this.mounted = false;
-    logApp("OrdersPage unmounted");
-  }
 
   componentDidUpdate(prevProps, prevState) {
     if (
@@ -839,7 +900,7 @@ handleNotificationClick = (id) => {
     const { shopId, addingCustomer } = this.state;
     const token = localStorage.getItem("accessToken");
     if (!addingCustomer.fullName || !addingCustomer.phone)
-      return alert("Vui lòng nhập đủ họ tên và số điện thoại");
+      this.showPopup("Thiếu thông tin", "Vui lòng nhập đủ họ tên và số điện thoại.", "warning");
 
     try {
       const payload = {
@@ -872,6 +933,29 @@ handleNotificationClick = (id) => {
     }
   };
 
+  printTempBill = async () => {
+  const orders = this.getActiveOrders();
+  if (!orders.length) return this.showPopup("Thông báo", "Không có sản phẩm để in.", "warning");
+
+  const order = {
+    id: "PHIẾU TẠM TÍNH",
+    total: orders.reduce((s, o) => s + o.price * o.qty, 0),
+    items: orders,
+  };
+
+  try {
+    const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
+    const shop = await PrintTemplate.getShopInfo();
+
+    const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
+    await printer.printOrder(order, shop);
+
+    this.showPopup("Thành công", "🖨️ Đã in phiếu tạm tính!", "success");
+  } catch (e) {
+    console.error("Lỗi in tạm tính:", e);
+   this.showPopup("Lỗi in", "Không thể in phiếu tạm tính.", "error");
+  }
+};
 
   /* ===================== AUTH / MISC ===================== */
   logout = () => {
@@ -963,7 +1047,7 @@ submitOrder = async () => {
 // 🔍 Kiểm tra trạng thái ca làm việc
   const currentShift = JSON.parse(localStorage.getItem("currentShift") || "{}");
   if (currentShift?.status === "closed") {
-    alert("⚠️ Ca làm việc hiện tại đã đóng. Vui lòng mở ca mới trước khi tạo đơn hàng!");
+    this.showPopup("Ca làm việc đóng", "Vui lòng mở ca mới trước khi tạo đơn hàng.", "warning");
     this.setState({ loading: false });
     return;
   }
@@ -1047,7 +1131,7 @@ submitOrder = async () => {
     const total = orders.reduce((s, it) => s + it.price * it.qty, 0);
 
     return (
-      <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40] rounded-2xl p-3">
+      <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40]xl p-3">
         <div className="flex gap-[5px] bg-[#012E40] h-full">
           {/* LEFT */}
           <div className="w-1/2 flex flex-col min-h-0">
@@ -1204,7 +1288,10 @@ submitOrder = async () => {
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <IconBtn title="Âm lượng"><Volume2 className="w-5 h-5" /></IconBtn>
                 <IconBtn title="Cảnh báo"><AlertCircle className="w-5 h-5" /></IconBtn>
-                <IconBtn title="In hoá đơn"><Printer className="w-5 h-5" /></IconBtn>
+                <IconBtn title="In hoá đơn" onClick={this.printTempBill}>
+  <Printer className="w-5 h-5" />
+</IconBtn>
+
                 <div className="relative">
                   <IconBtn title="Thông báo" onClick={this.toggleNotifications}>
                     <Bell className="w-5 h-5" />
@@ -1568,5 +1655,6 @@ submitOrder = async () => {
 /* ---------- Wrapper để dùng navigate (React Router v6) ---------- */
 export default function OrdersPage() {
   const navigate = useNavigate();
-  return <OrdersPageClass navigate={navigate} />;
+  const { toast } = useToast();
+  return <OrdersPageClass navigate={navigate} toast={toast} />;
 }

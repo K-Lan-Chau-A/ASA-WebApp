@@ -12,6 +12,7 @@ import RankPage from './pages/RankPage';
 import PromotionPage from './pages/PromotionPage';
 import UserFeaturePage from './pages/UserFeaturePage';
 import DashboardPage from './pages/DashboardPage';
+import { Toaster } from "@/components/ui/toaster";
 export default function App() {
   return (
     <Router>
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="/user-features" element={<UserFeaturePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
           </Routes>
+          <Toaster />
         </main>
       </div>
     </Router>
