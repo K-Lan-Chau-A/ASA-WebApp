@@ -28,39 +28,25 @@ export default class PrintService {
   }
 
   async printOrder(order, shop = null) {
-    try {
-      const text = await PrintTemplate.buildReceipt(order, shop);
+  try {
+    const html = await PrintTemplate.buildReceiptHTML(order, shop);
 
-      // 🌐 Trình duyệt → In qua popup
-      if (this.env === "web") {
-        const html = `
-          <html><head><style>
-            @page { size: 80mm auto; margin: 0; }
-            body { font-family: monospace; width: 80mm; padding: 4px; 
-                   line-height: 1.3; font-size: 13px; white-space: pre; }
-          </style></head>
-          <body>${text.replace(/\n/g, "<br>")}</body>
-          <script>
-            window.onload = () => { 
-              window.print(); 
-              setTimeout(() => window.close(), 400); 
-            };
-          </script>
-          </html>`;
-        const w = window.open("", "_blank", "width=400,height=600");
-        if (!w) throw new Error("Không thể mở cửa sổ in.");
-        w.document.write(html);
-        w.document.close();
-        return;
-      }
-
-      // ⚙️ Electron hoặc Node
-      const result = await this.driver.print(text);
-      console.log("[PrintService] ✅ Printed via driver:", result);
-      return result;
-    } catch (err) {
-      console.error("[PrintService] ❌ Print error:", err);
-      alert("Không thể in hóa đơn: " + (err.message || err));
+    if (this.env === "web") {
+      const w = window.open("", "_blank", "width=420,height=640");
+      if (!w) throw new Error("Không thể mở cửa sổ in.");
+      w.document.write(html);
+      w.document.close();
+      return;
     }
+
+    const text = await PrintTemplate.buildReceipt(order, shop);
+    const result = await this.driver.print(text);
+    console.log("[PrintService] ✅ Printed via driver:", result);
+    return result;
+  } catch (err) {
+    console.error("[PrintService] ❌ Print error:", err);
+    alert("Không thể in hóa đơn: " + (err.message || err));
   }
+}
+
 }

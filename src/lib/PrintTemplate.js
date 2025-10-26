@@ -102,7 +102,7 @@ export default class PrintTemplate {
     out += `Tổng cộng:           ${fmt.format(subTotal)} đ\n`;
     if (discount > 0)
       out += `Giảm giá:            -${fmt.format(discount)} đ\n`;
-    out += `Thành tiền:          ${fmt.format(grandTotal)} đ\n`;
+    out += `Thành tiền:          ${fmt.format(grandTotal)} đ\n`; c 
     out += line + "\n";
     const payLabel =
   order.method === "cash"
@@ -139,4 +139,188 @@ if (order.method === "cash") {
 
     return out;
   }
+static async buildReceiptHTML(order, shop = null) {
+  if (!shop) shop = await this.getShopInfo();
+  const fmt = new Intl.NumberFormat("vi-VN");
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("vi-VN");
+  const timeStr = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+
+  const payLabel =
+    order.method === "cash" ? "TIỀN MẶT" :
+    order.method === "qr" ? "CHUYỂN KHOẢN" :
+    order.method === "nfc" ? "NFC" :
+    order.method === "atm" ? "ATM" : "KHÁC";
+
+  const received = order.method === "cash"
+    ? (order.received > 0 ? order.received : order.total)
+    : null;
+  const change = order.method === "cash"
+    ? Math.max(0, (received || order.total) - order.total)
+    : null;
+
+ const qrUrl =
+  order.qrUrl ||
+  shop.qrcode ||
+  `https://img.vietqr.io/image/${shop.bankCode }-${shop.bankAccount}-compact2.png?amount=${order.total}&addInfo=Order%20${order.id}&accountName=${encodeURIComponent(shop.name)}&size=600`;
+   
+  return `
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    body { font-family: 'Arial', sans-serif; width: 80mm; margin: 0; padding: 6px; }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .line { border-bottom: 1px dashed #000; margin: 6px 0; }
+    .right { text-align: right; }
+    .small { font-size: 12px; color: #555; }
+    .note { font-style: italic; color: #666; font-size: 12px; margin-top: 2px; }
+    .noprint { margin-top: 10px; text-align: center; }
+    .noprint button {
+      background: #009DA5;
+      color: #fff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    @media print {
+      .noprint { display: none; }
+    }
+    .discount {
+      text-decoration: line-through;
+      color: #888;
+      margin-right: 4px;
+    }
+    .item {
+      margin-bottom: 6px;
+    }
+    .item-header {
+      font-size: 14px;
+      color: #000;
+    }
+    .item-line {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-top: 2px;
+    }
+    .item-line div {
+      text-align: center;
+      flex: 1;
+    }
+    .item-line div:first-child { text-align: left; }
+    .item-line div:last-child { text-align: right; }
+    .table-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    .table-header div {
+      flex: 1;
+      text-align: center;
+    }
+    .table-header div:first-child { text-align: left; }
+    .table-header div:last-child { text-align: right; }
+    .qr-box {
+  text-align: center;
+  margin-top: 10px;
+}
+
+.qr-box img {
+  width: 200px;          
+  height: auto;           
+  display: block;
+  margin: 0 auto;
+}
+
+  </style>
+</head>
+<body>
+  <div class="center">
+    <h2>${shop.name.toUpperCase()}</h2>
+    <div>${shop.address}</div>
+    <div>${shop.phone ? `Hotline: ${shop.phone}` : ""}</div>
+  </div>
+
+  <div class="line"></div>
+  <div>Mã hóa đơn: <b>#${order.id || "000"}</b></div>
+  <div>Thời gian: ${dateStr} ${timeStr}</div>
+  ${order.customerName ? `<div>Khách hàng: ${order.customerName}</div>` : ""}
+  ${order.customerPhone ? `<div>Điện thoại: ${order.customerPhone}</div>` : ""}
+  ${order.note ? `<div class="note">Ghi chú đơn: ${order.note}</div>` : ""}
+  <div class="line"></div>
+
+  <!-- 🔹 Header bảng sản phẩm -->
+  <div class="table-header">
+    <div>Đơn giá</div>
+    <div>SL</div>
+    <div>Đơn vị</div>
+    <div>Thành tiền</div>
+  </div>
+
+  <!-- 🔹 Danh sách sản phẩm -->
+  <div>
+    ${(order.items || []).map(it => `
+      <div class="item">
+        <div class="item-header">${it.name}</div>
+        <div class="item-line">
+          <div>
+            ${
+              it.discountPrice && it.discountPrice < it.price
+                ? `<span class="discount">${fmt.format(it.price)}đ</span> ${fmt.format(it.discountPrice)}đ`
+                : `${fmt.format(it.price)}đ`
+            }
+          </div>
+          <div>x${it.qty}</div>
+          <div>${it.unit || "-"}</div>
+          <div>${fmt.format((it.discountPrice || it.price) * it.qty)}đ</div>
+        </div>
+        ${it.note ? `<div class="note">• ${it.note}</div>` : ""}
+      </div>
+    `).join("")}
+  </div>
+
+  <div class="line"></div>
+  <table style="width:100%;font-size:13px;">
+    <tr><td>Tổng cộng:</td><td class="right">${fmt.format(order.total + (order.discount || 0))} đ</td></tr>
+    ${order.discount ? `<tr><td>Giảm giá:</td><td class="right">-${fmt.format(order.discount)} đ</td></tr>` : ""}
+    <tr><td class="bold">Thành tiền:</td><td class="right bold">${fmt.format(order.total)} đ</td></tr>
+  </table>
+
+  <div class="line"></div>
+  <div class="center">
+    <div>Phương thức: <b>${payLabel}</b></div>
+    ${
+      order.method === "cash"
+        ? `<div>Tiền khách đưa: ${fmt.format(received)} đ</div>
+           <div>Tiền thừa: ${fmt.format(change)} đ</div>`
+        : order.method === "qr" && qrUrl
+        ? `<div class="qr-box">
+             <p class="small">Vui lòng quét mã QR để thanh toán</p>
+             <img src="${qrUrl}" alt="QR Code" />
+           </div>`
+        : ""
+    }
+  </div>
+
+  <div class="line"></div>
+  <div class="center">
+    <div>Thu ngân: ${order.cashierName || "NV001"}</div>
+    <p><b>CẢM ƠN QUÝ KHÁCH!</b></p>
+    <p>Powered by ASA POS</p>
+  </div>
+
+  <div class="noprint">
+    <button onclick="window.print()">🖨️ In hóa đơn</button>
+  </div>
+</body>
+</html>`;
+}
+
 }
