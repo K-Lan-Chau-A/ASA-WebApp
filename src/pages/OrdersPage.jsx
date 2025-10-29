@@ -1,4 +1,3 @@
-
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { toast, useToast } from "@/components/ui/use-toast";
@@ -9,21 +8,40 @@ import { Input } from "@/components/ui/input";
 import { hubConnection } from "@/signalr/connection";
 import API_URL from "@/config/api";
 import {
-  Search, Star, Heart, Plus, LogOut,
-  AlertCircle, Bell, ChevronDown, Menu, Printer, Volume2,
-  Trash2, X, CheckCircle 
+  Search,
+  Star,
+  Heart,
+  Plus,
+  LogOut,
+  AlertCircle,
+  Bell,
+  ChevronDown,
+  Menu,
+  Printer,
+  Volume2,
+  Trash2,
+  X,
+  CheckCircle,
 } from "lucide-react";
 import PrintService from "@/services/PrintService";
 
 const DEBUG = true;
-const tlog = (ns) => (msg, ...rest) =>
-  DEBUG && console.log(`%c[${ns}]%c ${msg}`, "color:#22d3ee;font-weight:700", "color:inherit", ...rest);
-const logApp   = tlog("APP");
-const logAuth  = tlog("AUTH");
-const logCats  = tlog("CATEGORIES");
+const tlog =
+  (ns) =>
+  (msg, ...rest) =>
+    DEBUG &&
+    console.log(
+      `%c[${ns}]%c ${msg}`,
+      "color:#22d3ee;font-weight:700",
+      "color:inherit",
+      ...rest
+    );
+const logApp = tlog("APP");
+const logAuth = tlog("AUTH");
+const logCats = tlog("CATEGORIES");
 const logUnits = tlog("UNITS");
-const logProd  = tlog("PRODUCTS");
-const logCart  = tlog("CART");
+const logProd = tlog("PRODUCTS");
+const logCart = tlog("CART");
 
 const fmt = new Intl.NumberFormat("vi-VN");
 
@@ -75,7 +93,7 @@ class OrdersPageClass extends React.Component {
 
     unitsByPid: {},
 
-        customerSearch: "",
+    customerSearch: "",
     foundCustomer: null,
     loadingCustomer: false,
     showAddCustomer: false,
@@ -91,172 +109,191 @@ class OrdersPageClass extends React.Component {
     allProducts: [],
 
     notifications: [],
-  showNotifications: false, 
-  unreadCount: 0,
+    showNotifications: false,
+    unreadCount: 0,
   };
-showPopup = (title, message, type = "info") => {
-  const toastFn = this.props.toast; // đổi tên để tránh trùng
-  if (!toastFn) return alert(`${title}\n${message}`); // fallback
+  showPopup = (title, message, type = "info") => {
+    const toastFn = this.props.toast; // đổi tên để tránh trùng
+    if (!toastFn) return alert(`${title}\n${message}`); // fallback
 
-  const colorMap = {
-    info: "#00A8B0",
-    success: "#22c55e",
-    error: "#ef4444",
-    warning: "#eab308",
+    const colorMap = {
+      info: "#00A8B0",
+      success: "#22c55e",
+      error: "#ef4444",
+      warning: "#eab308",
+    };
+
+    toastFn({
+      title: title || "Thông báo",
+      description: message,
+      duration: 3000, // ⏱️ tự động ẩn sau 3s
+      style: {
+        borderLeft: `4px solid ${colorMap[type] || colorMap.info}`,
+        padding: "12px 16px",
+        background: "white",
+        borderRadius: "8px",
+      },
+    });
   };
-
-  toastFn({
-    title: title || "Thông báo",
-    description: message,
-    duration: 3000, // ⏱️ tự động ẩn sau 3s
-    style: {
-      borderLeft: `4px solid ${colorMap[type] || colorMap.info}`,
-      padding: "12px 16px",
-      background: "white",
-      borderRadius: "8px",
-    },
-  });
-};
-
 
   mounted = false;
 
   /* ===================== LIFECYCLE (TỐI ƯU HÓA) ===================== */
-componentDidMount() {
-  this.mounted = true;
-  logApp("OrdersPage mounted");
+  componentDidMount() {
+    this.mounted = true;
+    logApp("OrdersPage mounted");
 
-  document.addEventListener("click", this.handleOutsideClick);
+    document.addEventListener("click", this.handleOutsideClick);
 
-  // 🚀 Kết nối SignalR chỉ khi chưa có kết nối
-  if (hubConnection.state === "Disconnected") {
-    hubConnection.start().then(() => {
-      console.groupCollapsed("%c[SignalR]%c Connected!", "color:#22d3ee;font-weight:700", "color:inherit");
-      console.log("🔗 ConnectionId:", hubConnection?.connectionId);
-      console.groupEnd();
+    // 🚀 Kết nối SignalR chỉ khi chưa có kết nối
+    if (hubConnection.state === "Disconnected") {
+      hubConnection
+        .start()
+        .then(() => {
+          console.groupCollapsed(
+            "%c[SignalR]%c Connected!",
+            "color:#22d3ee;font-weight:700",
+            "color:inherit"
+          );
+          console.log("🔗 ConnectionId:", hubConnection?.connectionId);
+          console.groupEnd();
 
-      // Nhận thông báo mới
-      hubConnection.on("ReceiveNotification", (msg) => this.handleIncomingNotification(msg));
-    }).catch((err) => console.error("[SignalR] Connection error:", err));
-  }
+          // Nhận thông báo mới
+          hubConnection.on("ReceiveNotification", (msg) =>
+            this.handleIncomingNotification(msg)
+          );
+        })
+        .catch((err) => console.error("[SignalR] Connection error:", err));
+    }
 
-  // 🔑 Kiểm tra token và shopId
-  const token = localStorage.getItem("accessToken");
-  if (!token) return this.props.navigate("/");
+    // 🔑 Kiểm tra token và shopId
+    const token = localStorage.getItem("accessToken");
+    if (!token) return this.props.navigate("/");
 
-  let profile = null;
-  try {
-    profile =
-      JSON.parse(localStorage.getItem("userProfile") || "null") ||
-      JSON.parse(localStorage.getItem("auth") || "null")?.profile || null;
-  } catch {}
-  const shopId = Number(profile?.shopId || 0);
-  if (!shopId) {
-    this.setState({ authErr: "Không tìm thấy shopId trong hồ sơ người dùng." });
-    return;
-  }
-
-  // 📦 Nếu có state đã cache, khôi phục lại (để không load lại API)
-  const cachedState = localStorage.getItem("cachedOrdersPage");
-  if (cachedState) {
+    let profile = null;
     try {
-      const parsed = JSON.parse(cachedState);
-      this.setState({ ...parsed, shopId }, () => {
-        logApp("✅ Restored cached OrdersPage state");
-        // Dù có cache, vẫn refresh nền để cập nhật dữ liệu mới nhất
-        this.refreshInBackground();
+      profile =
+        JSON.parse(localStorage.getItem("userProfile") || "null") ||
+        JSON.parse(localStorage.getItem("auth") || "null")?.profile ||
+        null;
+    } catch {}
+    const shopId = Number(profile?.shopId || 0);
+    if (!shopId) {
+      this.setState({
+        authErr: "Không tìm thấy shopId trong hồ sơ người dùng.",
       });
-      return; // dừng ở đây, không gọi lại toàn bộ API
-    } catch (e) {
-      console.warn("⚠️ Lỗi khi parse cache:", e);
+      return;
     }
+
+    // 📦 Nếu có state đã cache, khôi phục lại (để không load lại API)
+    const cachedState = localStorage.getItem("cachedOrdersPage");
+    if (cachedState) {
+      try {
+        const parsed = JSON.parse(cachedState);
+        this.setState({ ...parsed, shopId }, () => {
+          logApp("✅ Restored cached OrdersPage state");
+          // Dù có cache, vẫn refresh nền để cập nhật dữ liệu mới nhất
+          this.refreshInBackground();
+        });
+        return; // dừng ở đây, không gọi lại toàn bộ API
+      } catch (e) {
+        console.warn("⚠️ Lỗi khi parse cache:", e);
+      }
+    }
+
+    // 🆕 Nếu chưa có cache → gọi API lần đầu
+    this.setState({ shopId }, async () => {
+      await Promise.all([
+        this.fetchUnitsAllByShop(),
+        this.fetchAllProductsOnce(),
+        this.fetchNotifications(),
+      ]);
+      logApp("✅ Initial load complete");
+    });
   }
 
-  // 🆕 Nếu chưa có cache → gọi API lần đầu
-  this.setState({ shopId }, async () => {
-    await Promise.all([
-      this.fetchUnitsAllByShop(),
-      this.fetchAllProductsOnce(),
-      this.fetchNotifications(),
-    ]);
-    logApp("✅ Initial load complete");
-  });
-}
+  componentWillUnmount() {
+    this.mounted = false;
+    document.removeEventListener("click", this.handleOutsideClick);
 
-componentWillUnmount() {
-  this.mounted = false;
-  document.removeEventListener("click", this.handleOutsideClick);
-
-  // 💾 Cache lại toàn bộ state (trừ loading)
-  const cacheData = {
-    invoices: this.state.invoices,
-    activeIdx: this.state.activeIdx,
-    categories: this.state.categories,
-    productsByTab: this.state.productsByTab,
-    allProducts: this.state.allProducts,
-    unitsByPid: this.state.unitsByPid,
-    foundCustomer: this.state.foundCustomer,
-    customerSearch: this.state.customerSearch,
-    notifications: this.state.notifications,
-    unreadCount: this.state.unreadCount,
-    activeTab: this.state.activeTab,
-    search: this.state.search,
-  };
-  localStorage.setItem("cachedOrdersPage", JSON.stringify(cacheData));
-  logApp("💾 OrdersPage state cached");
-}
-
-refreshInBackground = async () => {
-  logApp("🔄 Background refresh start...");
-  try {
-    const [products, units, notifs] = await Promise.allSettled([
-      this.fetchAllProductsOnce(),
-      this.fetchUnitsAllByShop(),
-      this.fetchNotifications(),
-    ]);
-
-    if (products.status === "fulfilled") {
-      localStorage.setItem("cachedProducts", JSON.stringify(this.state.allProducts));
-    }
-    if (units.status === "fulfilled") {
-      localStorage.setItem("cachedUnits", JSON.stringify(this.state.unitsByPid));
-    }
-    if (notifs.status === "fulfilled") {
-      localStorage.setItem("cachedNotifications", JSON.stringify(this.state.notifications));
-    }
-
-    logApp("✅ Background refresh complete");
-  } catch (err) {
-    console.warn("⚠️ Background refresh failed:", err);
-  }
-};
-
-/* ===================== XỬ LÝ SIGNALR THÔNG BÁO ===================== */
-handleIncomingNotification = (msg) => {
-  if (!this.mounted) return;
-
-  const n = {
-    id: msg.notificationId || msg.id || Date.now(),
-    title: msg.title || "Thông báo",
-    text: msg.content || msg.message || "Không có nội dung",
-    read: false,
-    createdAt: msg.createdAt || new Date().toISOString(),
-    type: msg.type ?? 0,
-  };
-
-  this.setState((prev) => {
-    const exists = prev.notifications.some((x) => x.id === n.id);
-    if (exists) return prev;
-    const updatedList = [n, ...prev.notifications];
-    const updatedUnread = prev.unreadCount + 1;
-    localStorage.setItem("cachedNotifications", JSON.stringify(updatedList));
-    return {
-      notifications: updatedList,
-      unreadCount: updatedUnread,
+    // 💾 Cache lại toàn bộ state (trừ loading)
+    const cacheData = {
+      invoices: this.state.invoices,
+      activeIdx: this.state.activeIdx,
+      categories: this.state.categories,
+      productsByTab: this.state.productsByTab,
+      allProducts: this.state.allProducts,
+      unitsByPid: this.state.unitsByPid,
+      foundCustomer: this.state.foundCustomer,
+      customerSearch: this.state.customerSearch,
+      notifications: this.state.notifications,
+      unreadCount: this.state.unreadCount,
+      activeTab: this.state.activeTab,
+      search: this.state.search,
     };
-  });
-};
+    localStorage.setItem("cachedOrdersPage", JSON.stringify(cacheData));
+    logApp("💾 OrdersPage state cached");
+  }
 
+  refreshInBackground = async () => {
+    logApp("🔄 Background refresh start...");
+    try {
+      const [products, units, notifs] = await Promise.allSettled([
+        this.fetchAllProductsOnce(),
+        this.fetchUnitsAllByShop(),
+        this.fetchNotifications(),
+      ]);
+
+      if (products.status === "fulfilled") {
+        localStorage.setItem(
+          "cachedProducts",
+          JSON.stringify(this.state.allProducts)
+        );
+      }
+      if (units.status === "fulfilled") {
+        localStorage.setItem(
+          "cachedUnits",
+          JSON.stringify(this.state.unitsByPid)
+        );
+      }
+      if (notifs.status === "fulfilled") {
+        localStorage.setItem(
+          "cachedNotifications",
+          JSON.stringify(this.state.notifications)
+        );
+      }
+
+      logApp("✅ Background refresh complete");
+    } catch (err) {
+      console.warn("⚠️ Background refresh failed:", err);
+    }
+  };
+
+  /* ===================== XỬ LÝ SIGNALR THÔNG BÁO ===================== */
+  handleIncomingNotification = (msg) => {
+    if (!this.mounted) return;
+
+    const n = {
+      id: msg.notificationId || msg.id || Date.now(),
+      title: msg.title || "Thông báo",
+      text: msg.content || msg.message || "Không có nội dung",
+      read: false,
+      createdAt: msg.createdAt || new Date().toISOString(),
+      type: msg.type ?? 0,
+    };
+
+    this.setState((prev) => {
+      const exists = prev.notifications.some((x) => x.id === n.id);
+      if (exists) return prev;
+      const updatedList = [n, ...prev.notifications];
+      const updatedUnread = prev.unreadCount + 1;
+      localStorage.setItem("cachedNotifications", JSON.stringify(updatedList));
+      return {
+        notifications: updatedList,
+        unreadCount: updatedUnread,
+      };
+    });
+  };
 
   componentDidUpdate(prevProps, prevState) {
     if (
@@ -268,115 +305,126 @@ handleIncomingNotification = (msg) => {
       }
     }
   }
-markNotificationAsRead = async (id) => {
-  const token = localStorage.getItem("accessToken");
-  if (!token || !id) return;
+  markNotificationAsRead = async (id) => {
+    const token = localStorage.getItem("accessToken");
+    if (!token || !id) return;
 
-  const notification = this.state.notifications.find(n => n.id === id);
-  if (!notification) {
-    console.warn("⚠️ Notification not found in state:", id);
-    return;
-  }
+    const notification = this.state.notifications.find((n) => n.id === id);
+    if (!notification) {
+      console.warn("⚠️ Notification not found in state:", id);
+      return;
+    }
 
-  // Lấy userProfile để lấy shopId, userId
-  const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    // Lấy userProfile để lấy shopId, userId
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
 
-  // Chuẩn bị payload đúng schema Swagger
-  const payload = {
-    shopId: Number(profile?.shopId || 0),
-    userId: Number(profile?.userId || 0),
-    title: notification.title || "Thông báo",
-    content: notification.text || "",
-    type: 0, // nếu backend có phân loại thì set đúng type ở đây
-    isRead: true,
-    createdAt: new Date().toISOString(), // hoặc notification.createdAt nếu có
-  };
+    // Chuẩn bị payload đúng schema Swagger
+    const payload = {
+      shopId: Number(profile?.shopId || 0),
+      userId: Number(profile?.userId || 0),
+      title: notification.title || "Thông báo",
+      content: notification.text || "",
+      type: 0, // nếu backend có phân loại thì set đúng type ở đây
+      isRead: true,
+      createdAt: new Date().toISOString(), // hoặc notification.createdAt nếu có
+    };
 
-  try {
-    const url = `${API_URL}/api/notifications/${id}`;
-    const res = await fetch(url, {
-      method: "PUT",
-      headers: {
-        accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const url = `${API_URL}/api/notifications/${id}`;
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
 
-    const data = await this.safeParse(res);
-    if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
-    console.log("✅ Marked notification as read:", id, payload);
-  } catch (e) {
-    console.error("❌ Failed to mark notification as read:", e);
-  }
-};
-
-
-  /* ===================== UTILS ===================== */
-  safeParse = async (res) => {
-    try { return await res.json(); }
-    catch {
-      const text = await res.text().catch(() => "");
-      try { return JSON.parse(text); } catch { return { raw: text }; }
+      console.log("✅ Marked notification as read:", id, payload);
+    } catch (e) {
+      console.error("❌ Failed to mark notification as read:", e);
     }
   };
 
-formatTimeAgo = (isoString) => {
-  if (!isoString) return "";
-  const now = new Date();
-  const then = new Date(isoString);
-  const diff = (now - then) / 1000; // giây
+  /* ===================== UTILS ===================== */
+  safeParse = async (res) => {
+    try {
+      return await res.json();
+    } catch {
+      const text = await res.text().catch(() => "");
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { raw: text };
+      }
+    }
+  };
 
-  if (diff < 10) return "Vừa xong";
-  if (diff < 60) return `${Math.floor(diff)} giây trước`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
+  formatTimeAgo = (isoString) => {
+    if (!isoString) return "";
+    const now = new Date();
+    const then = new Date(isoString);
+    const diff = (now - then) / 1000; // giây
 
-  const days = Math.floor(diff / 86400);
-  if (days === 1) return `Hôm qua, ${then.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
-  if (days < 7) return `${days} ngày trước`;
+    if (diff < 10) return "Vừa xong";
+    if (diff < 60) return `${Math.floor(diff)} giây trước`;
+    if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
 
-  return then.toLocaleDateString("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+    const days = Math.floor(diff / 86400);
+    if (days === 1)
+      return `Hôm qua, ${then.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`;
+    if (days < 7) return `${days} ngày trước`;
 
-// ===== DEBUG HELPERS & VALIDATION =====
-validateCartLines = (orders = []) => {
-  const issues = [];
-  orders.forEach((o, i) => {
-    const pid  = Number(o?.id || 0);
-    const puid = Number(o?.productUnitId ?? o?.unitOptions?.[0]?.productUnitId ?? 0);
-    const qty  = Number(o?.qty || 0);
-    if (!pid)  issues.push({ idx: i, reason: "Missing productId", line: o });
-    if (!puid) issues.push({ idx: i, reason: "Missing productUnitId", line: o });
-    if (!qty)  issues.push({ idx: i, reason: "Quantity = 0", line: o });
-  });
-  return issues;
-};
+    return then.toLocaleDateString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
-logCartMap = (orders = [], orderDetails = []) => {
-  console.groupCollapsed("%c[CART→PAYLOAD] Map lines", "color:#22d3ee;font-weight:700");
-  console.table(
-    orders.map((o, i) => ({
-      idx: i,
-      name: o.name,
-      productId: o.id,
-      productUnitId: o.productUnitId,
-      unitOptions0: o.unitOptions?.[0]?.productUnitId ?? null,
-      qty: o.qty,
-      price: o.price,
-    }))
-  );
-  console.table(orderDetails.map((d, i) => ({ idx: i, ...d })));
-  console.groupEnd();
-};
+  // ===== DEBUG HELPERS & VALIDATION =====
+  validateCartLines = (orders = []) => {
+    const issues = [];
+    orders.forEach((o, i) => {
+      const pid = Number(o?.id || 0);
+      const puid = Number(
+        o?.productUnitId ?? o?.unitOptions?.[0]?.productUnitId ?? 0
+      );
+      const qty = Number(o?.qty || 0);
+      if (!pid) issues.push({ idx: i, reason: "Missing productId", line: o });
+      if (!puid)
+        issues.push({ idx: i, reason: "Missing productUnitId", line: o });
+      if (!qty) issues.push({ idx: i, reason: "Quantity = 0", line: o });
+    });
+    return issues;
+  };
+
+  logCartMap = (orders = [], orderDetails = []) => {
+    console.groupCollapsed(
+      "%c[CART→PAYLOAD] Map lines",
+      "color:#22d3ee;font-weight:700"
+    );
+    console.table(
+      orders.map((o, i) => ({
+        idx: i,
+        name: o.name,
+        productId: o.id,
+        productUnitId: o.productUnitId,
+        unitOptions0: o.unitOptions?.[0]?.productUnitId ?? null,
+        qty: o.qty,
+        price: o.price,
+      }))
+    );
+    console.table(orderDetails.map((d, i) => ({ idx: i, ...d })));
+    console.groupEnd();
+  };
 
   /* ===================== FETCH CATALOG ===================== */
   fetchCategories = async () => {
@@ -391,7 +439,10 @@ logCartMap = (orders = [], orderDetails = []) => {
     try {
       const url = `${API_URL}/api/products?page=1&pageSize=500`;
       const res = await fetch(url, {
-        headers: { accept: "application/json, text/plain, */*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          accept: "application/json, text/plain, */*",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         mode: "cors",
         signal: controller.signal,
       });
@@ -404,34 +455,42 @@ logCartMap = (orders = [], orderDetails = []) => {
       logCats("Products raw.items length", items.length);
 
       const byShop = items
-  .filter((p) => Number(p.shopId) === Number(this.state.shopId))
-  .filter((p) => Number(p.status) === 1);
+        .filter((p) => Number(p.shopId) === Number(this.state.shopId))
+        .filter((p) => Number(p.status) === 1);
 
-const map = new Map();
+      const map = new Map();
 
-for (const p of byShop) {
-  const id = p.categoryId ?? null;
-  const name = p.categoryName || (id ? `Danh mục ${id}` : "Chưa phân loại");
-  if (!id) continue; 
-  if (!map.has(id)) map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
-}
+      for (const p of byShop) {
+        const id = p.categoryId ?? null;
+        const name =
+          p.categoryName || (id ? `Danh mục ${id}` : "Chưa phân loại");
+        if (!id) continue;
+        if (!map.has(id))
+          map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
+      }
 
-const withAll = [
-  { id: "all", name: "Tất cả", desc: "Hiển thị toàn bộ sản phẩm", value: "all" },
-  ...Array.from(map.values())
-];
+      const withAll = [
+        {
+          id: "all",
+          name: "Tất cả",
+          desc: "Hiển thị toàn bộ sản phẩm",
+          value: "all",
+        },
+        ...Array.from(map.values()),
+      ];
 
-if (!this.mounted) return;
-this.setState({ categories: withAll, activeTab: "all" });
-logCats("Derived category count", withAll.length, withAll);
-
+      if (!this.mounted) return;
+      this.setState({ categories: withAll, activeTab: "all" });
+      logCats("Derived category count", withAll.length, withAll);
 
       if (!this.mounted) return;
       this.setState({ categories: withAll, activeTab: "all" });
       logCats("Derived category count", withAll.length, withAll);
     } catch (e) {
       if (!this.mounted) return;
-      const msg = String(e).includes("Failed to fetch") ? "Không gọi được API (CORS/mạng?)." : `Lỗi tải danh mục: ${e.message || e}`;
+      const msg = String(e).includes("Failed to fetch")
+        ? "Không gọi được API (CORS/mạng?)."
+        : `Lỗi tải danh mục: ${e.message || e}`;
       this.setState({ catError: msg });
       logCats("ERROR", msg);
     } finally {
@@ -448,10 +507,15 @@ logCats("Derived category count", withAll.length, withAll);
     const token = localStorage.getItem("accessToken");
 
     try {
-      logUnits("Fetch units (all by shop) start", { shopId: this.state.shopId });
+      logUnits("Fetch units (all by shop) start", {
+        shopId: this.state.shopId,
+      });
       const url = `${API_URL}/api/product-units?ShopId=${this.state.shopId}&page=1&pageSize=5000`;
       const res = await fetch(url, {
-        headers: { accept: "application/json, text/plain, */*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          accept: "application/json, text/plain, */*",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         mode: "cors",
       });
       const data = await this.safeParse(res);
@@ -472,8 +536,8 @@ logCats("Derived category count", withAll.length, withAll);
       const unitsByPid = {};
       byPid.forEach((rows, pid) => {
         const base = pickBaseUnit(rows);
-        const sorted = base ? [base, ...rows.filter(r => r !== base)] : rows;
-        unitsByPid[pid] = sorted.map(u => ({
+        const sorted = base ? [base, ...rows.filter((r) => r !== base)] : rows;
+        unitsByPid[pid] = sorted.map((u) => ({
           productUnitId: Number(u.productUnitId),
           unitName: u.unitName,
           price: Number(u.price ?? 0),
@@ -483,7 +547,10 @@ logCats("Derived category count", withAll.length, withAll);
 
       if (this.mounted) {
         this.setState({ unitsByPid }, () => {
-          logUnits("unitsByPid cached keys", Object.keys(this.state.unitsByPid).length);
+          logUnits(
+            "unitsByPid cached keys",
+            Object.keys(this.state.unitsByPid).length
+          );
           this.ensureProducts(this.state.activeTab, true);
         });
       }
@@ -498,7 +565,10 @@ logCats("Derived category count", withAll.length, withAll);
     try {
       const url = `${API_URL}/api/product-units?ShopId=${this.state.shopId}&ProductId=${productId}&page=1&pageSize=500`;
       const res = await fetch(url, {
-        headers: { accept: "application/json, text/plain, */*", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          accept: "application/json, text/plain, */*",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         mode: "cors",
       });
       const data = await this.safeParse(res);
@@ -506,17 +576,25 @@ logCats("Derived category count", withAll.length, withAll);
       const rows = Array.isArray(data?.items) ? data.items : [];
       const sorted = (() => {
         const base = pickBaseUnit(rows);
-        return base ? [base, ...rows.filter(r => r !== base)] : rows;
+        return base ? [base, ...rows.filter((r) => r !== base)] : rows;
       })();
-      const mapped = sorted.map(u => ({
+      const mapped = sorted.map((u) => ({
         productUnitId: Number(u.productUnitId),
         unitName: u.unitName,
         price: Number(u.price ?? 0),
         conversionFactor: Number(u.conversionFactor ?? 1),
       }));
-      this.setState((prev) => ({
-        unitsByPid: { ...prev.unitsByPid, [productId]: mapped }
-      }), () => logUnits("unitsByPid added product", productId, this.state.unitsByPid[productId]));
+      this.setState(
+        (prev) => ({
+          unitsByPid: { ...prev.unitsByPid, [productId]: mapped },
+        }),
+        () =>
+          logUnits(
+            "unitsByPid added product",
+            productId,
+            this.state.unitsByPid[productId]
+          )
+      );
     } catch (e) {
       logUnits("ensureUnitsForProduct failed", productId, e);
     }
@@ -524,140 +602,173 @@ logCats("Derived category count", withAll.length, withAll);
 
   /* ===================== PRODUCTS CACHE ===================== */
   ensureProducts = async (tabValue, force = false) => {
-  const entry = this.state.productsByTab[tabValue];
-  const shouldSkip = entry?.items?.length || entry?.loading;
-  if (shouldSkip && !force) return;
+    const entry = this.state.productsByTab[tabValue];
+    const shouldSkip = entry?.items?.length || entry?.loading;
+    if (shouldSkip && !force) return;
 
-  const category = this.state.categories.find((c) => c.value === tabValue);
-  const categoryId = category && category.id !== "all" ? Number(category.id) : null;
+    const category = this.state.categories.find((c) => c.value === tabValue);
+    const categoryId =
+      category && category.id !== "all" ? Number(category.id) : null;
 
-  const filtered = this.state.allProducts
-    .filter((p) => categoryId ? Number(p.categoryId) === categoryId : true)
-    .map((p) => {
-      const pid = Number(p.productId);
-      const unitRows = this.state.unitsByPid[pid] || [];
-      const base = unitRows.length ? unitRows[0] : null;
-      return {
-        id: pid,
-        name: p.productName,
-        price: base ? base.price : (p.price ?? 0),
-        unit: base ? base.unitName : "—",
-        productUnitId: base ? base.productUnitId : undefined,
-        unitOptions: unitRows,
-        img: p.productImageURL || "https://placehold.co/150x150",
-      };
-    });
+    const filtered = this.state.allProducts
+      .filter((p) => (categoryId ? Number(p.categoryId) === categoryId : true))
+      .map((p) => {
+        const pid = Number(p.productId);
+        const unitRows = this.state.unitsByPid[pid] || [];
+        const base = unitRows.length ? unitRows[0] : null;
 
-  this.setState((prev) => ({
-    productsByTab: {
-      ...prev.productsByTab,
-      [tabValue]: { items: filtered, loading: false, error: "" },
-    },
-  }));
-};
-fetchNotifications = async () => {
-  const { shopId } = this.state;
-  if (!shopId) return;
+        const basePrice = Number(base?.price ?? p.price ?? 0);
+        const promoPrice = Number(p.promotionPrice ?? 0);
+        const promoType = Number(p.promotionType ?? 0);
 
-  const token = localStorage.getItem("accessToken");
-  try {
-    const url = `${API_URL}/api/notifications?ShopId=${shopId}`;
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+        const hasPromo =
+          promoPrice > 0 && !isNaN(promoPrice) && promoPrice < basePrice;
 
-    const data = await this.safeParse(res);
-    if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+        let discountPercent = null;
+        if ((promoType === 2 || hasPromo) && basePrice > 0) {
+          discountPercent = Math.round(
+            ((basePrice - promoPrice) / basePrice) * 100
+          );
+        }
 
-    const items = Array.isArray(data.items) ? data.items : [];
-
-    const sorted = items.sort(
-      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-    );
-
-    const mapped = sorted.map((n) => ({
-      id: n.notificationId,
-      title: n.title,
-      text: n.content,
-      type: n.type ?? 0,
-      read: Boolean(n.isRead),
-      createdAt: n.createdAt,
-    }));
-
-    const unread = mapped.filter((n) => !n.read).length;
-
-    if (this.mounted) {
-      this.setState({
-        notifications: mapped,
-        unreadCount: unread,
+        return {
+          id: pid,
+          name: p.productName,
+          price: basePrice,
+          promoPrice: hasPromo ? promoPrice : null,
+          hasPromo,
+          promoType,
+          discountPercent,
+          unit: base ? base.unitName : "—",
+          productUnitId: base ? base.productUnitId : undefined,
+          unitOptions: unitRows,
+          img: p.productImageURL || "https://placehold.co/150x150",
+        };
       });
-    }
-  } catch (e) {
-    console.error("[Notifications] Fetch error:", e);
-  }
-};
 
-  fetchAllProductsOnce = async () => {
-  if (!this.state.shopId) return;
-  const token = localStorage.getItem("accessToken");
+    this.setState((prev) => ({
+      productsByTab: {
+        ...prev.productsByTab,
+        [tabValue]: { items: filtered, loading: false, error: "" },
+      },
+    }));
+  };
 
-  try {
-    logProd("fetchAllProductsOnce start");
-    let page = 1;
-    const pageSize = 500;
-    let allItems = [];
-    let hasMore = true;
+  fetchNotifications = async () => {
+    const { shopId } = this.state;
+    if (!shopId) return;
 
-    while (hasMore) {
-      const url = `${API_URL}/api/products?page=${page}&pageSize=${pageSize}`;
+    const token = localStorage.getItem("accessToken");
+    try {
+      const url = `${API_URL}/api/notifications?ShopId=${shopId}`;
       const res = await fetch(url, {
         headers: {
-          accept: "*/*",
+          accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
+
       const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
-      const items = Array.isArray(data?.items) ? data.items : [];
-      allItems = allItems.concat(items);
-      hasMore = items.length === pageSize;
-      page++;
+      const items = Array.isArray(data.items) ? data.items : [];
+
+      const sorted = items.sort(
+        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+      );
+
+      const mapped = sorted.map((n) => ({
+        id: n.notificationId,
+        title: n.title,
+        text: n.content,
+        type: n.type ?? 0,
+        read: Boolean(n.isRead),
+        createdAt: n.createdAt,
+      }));
+
+      const unread = mapped.filter((n) => !n.read).length;
+
+      if (this.mounted) {
+        this.setState({
+          notifications: mapped,
+          unreadCount: unread,
+        });
+      }
+    } catch (e) {
+      console.error("[Notifications] Fetch error:", e);
+    }
+  };
+
+  fetchAllProductsOnce = async () => {
+    if (!this.state.shopId) return;
+    const token = localStorage.getItem("accessToken");
+
+    try {
+      logProd("fetchAllProductsOnce start");
+      let page = 1;
+      const pageSize = 500;
+      let allItems = [];
+      let hasMore = true;
+
+      while (hasMore) {
+        const url = `${API_URL}/api/products?page=${page}&pageSize=${pageSize}`;
+        const res = await fetch(url, {
+          headers: {
+            accept: "*/*",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        const data = await this.safeParse(res);
+        if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+        const items = Array.isArray(data?.items) ? data.items : [];
+        allItems = allItems.concat(items);
+        hasMore = items.length === pageSize;
+        page++;
+      }
+
+      const byShop = allItems
+        .filter((p) => Number(p.shopId) === Number(this.state.shopId))
+        .filter((p) => Number(p.status) === 1);
+
+      logProd(
+        "Fetched total",
+        byShop.length,
+        "products for shop",
+        this.state.shopId
+      );
+      if (this.mounted)
+        this.setState({ allProducts: byShop }, () => {
+          this.buildCategoryTabs(byShop);
+          this.ensureProducts("all", true);
+        });
+    } catch (e) {
+      console.error("[PRODUCTS] Fetch failed:", e);
+    }
+  };
+
+  buildCategoryTabs = (products) => {
+    const map = new Map();
+    for (const p of products) {
+      const id = p.categoryId ?? null;
+      const name = p.categoryName || (id ? `Danh mục ${id}` : "Chưa phân loại");
+      if (!id) continue;
+      if (!map.has(id))
+        map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
     }
 
-    const byShop = allItems
-      .filter((p) => Number(p.shopId) === Number(this.state.shopId))
-      .filter((p) => Number(p.status) === 1);
+    const withAll = [
+      {
+        id: "all",
+        name: "Tất cả",
+        desc: "Hiển thị toàn bộ sản phẩm",
+        value: "all",
+      },
+      ...Array.from(map.values()),
+    ];
 
-    logProd("Fetched total", byShop.length, "products for shop", this.state.shopId);
-    if (this.mounted) this.setState({ allProducts: byShop }, () => {
-      this.buildCategoryTabs(byShop);
-      this.ensureProducts("all", true);
-    });
-  } catch (e) {
-    console.error("[PRODUCTS] Fetch failed:", e);
-  }
-};
-
-buildCategoryTabs = (products) => {
-  const map = new Map();
-  for (const p of products) {
-    const id = p.categoryId ?? null;
-    const name = p.categoryName || (id ? `Danh mục ${id}` : "Chưa phân loại");
-    if (!id) continue;
-    if (!map.has(id)) map.set(id, { id, name, desc: "", value: `${id}-${slugify(name)}` });
-  }
-
-  const withAll = [
-    { id: "all", name: "Tất cả", desc: "Hiển thị toàn bộ sản phẩm", value: "all" },
-    ...Array.from(map.values()),
-  ];
-
-  if (this.mounted) this.setState({ categories: withAll, activeTab: "all" });
-};
+    if (this.mounted) this.setState({ categories: withAll, activeTab: "all" });
+  };
 
   /* ===================== CART OPS ===================== */
   setSearch = (v) => this.setState({ search: v });
@@ -668,8 +779,14 @@ buildCategoryTabs = (products) => {
     const entry = this.state.productsByTab[tabValue] || { items: [] };
     if (!this.state.search.trim()) return entry.items;
     const q = normalize(this.state.search);
-    const result = (entry.items || []).filter((it) => normalize(it.name).includes(q));
-    logProd("filter", { tabValue, query: this.state.search, resultCount: result.length });
+    const result = (entry.items || []).filter((it) =>
+      normalize(it.name).includes(q)
+    );
+    logProd("filter", {
+      tabValue,
+      query: this.state.search,
+      resultCount: result.length,
+    });
     return result;
   };
 
@@ -678,15 +795,28 @@ buildCategoryTabs = (products) => {
     logCart("newInvoice BEFORE", ids);
     this.setState(
       (prev) => ({
-        invoices: [...prev.invoices, { id: prev.invoices[prev.invoices.length - 1].id + 1, orders: [] }],
+        invoices: [
+          ...prev.invoices,
+          { id: prev.invoices[prev.invoices.length - 1].id + 1, orders: [] },
+        ],
         activeIdx: prev.activeIdx + 1,
       }),
-      () => logCart("newInvoice AFTER", this.state.invoices.map((x) => x.id), "activeIdx", this.state.activeIdx)
+      () =>
+        logCart(
+          "newInvoice AFTER",
+          this.state.invoices.map((x) => x.id),
+          "activeIdx",
+          this.state.activeIdx
+        )
     );
   };
 
   closeInvoice = (idx) => {
-    logCart("closeInvoice", { idx, activeIdx: this.state.activeIdx, ids: this.state.invoices.map(x => x.id) });
+    logCart("closeInvoice", {
+      idx,
+      activeIdx: this.state.activeIdx,
+      ids: this.state.invoices.map((x) => x.id),
+    });
     this.setState((prev) => {
       if (prev.invoices.length === 1) {
         logCart("closeInvoice aborted (only 1 invoice)");
@@ -700,7 +830,8 @@ buildCategoryTabs = (products) => {
     });
   };
 
-  getActiveOrders = () => this.state.invoices[this.state.activeIdx]?.orders || [];
+  getActiveOrders = () =>
+    this.state.invoices[this.state.activeIdx]?.orders || [];
 
   setOrdersForActive = (updater) => {
     this.setState((prev) => {
@@ -730,14 +861,25 @@ buildCategoryTabs = (products) => {
     }
 
     this.setOrdersForActive((prev) => {
-      const i = prev.findIndex((x) => x.id === p.id && x.productUnitId === p.productUnitId);
+      const i = prev.findIndex(
+        (x) => x.id === p.id && x.productUnitId === p.productUnitId
+      );
       if (i >= 0) {
         const copy = [...prev];
         copy[i] = { ...copy[i], qty: copy[i].qty + 1 };
         logCart("inc qty existing line", { index: i, after: copy[i] });
         return copy;
       }
-      const next = [...prev, { ...p, qty: 1, note: "" }];
+      const next = [
+        ...prev,
+        {
+          ...p,
+          qty: 1,
+          note: "",
+          price: p.hasPromo ? p.promoPrice : p.price,
+        },
+      ];
+
       logCart("push item", next[next.length - 1]);
       return next;
     });
@@ -758,7 +900,10 @@ buildCategoryTabs = (products) => {
   };
 
   setQty = (idx, nextVal) => {
-    const normalized = Math.max(1, Number.isFinite(+nextVal) ? Math.floor(+nextVal) : 1);
+    const normalized = Math.max(
+      1,
+      Number.isFinite(+nextVal) ? Math.floor(+nextVal) : 1
+    );
     logCart("setQty", { idx, input: nextVal, normalized });
     this.setOrdersForActive((prev) => {
       const copy = [...prev];
@@ -786,7 +931,9 @@ buildCategoryTabs = (products) => {
       logCart("changeOrderUnit: no unitOptions on line", idx);
       return;
     }
-    const picked = line.unitOptions.find(u => Number(u.productUnitId) === Number(productUnitId));
+    const picked = line.unitOptions.find(
+      (u) => Number(u.productUnitId) === Number(productUnitId)
+    );
     if (!picked) {
       logCart("changeOrderUnit: unit not found", { idx, productUnitId });
       return;
@@ -803,7 +950,7 @@ buildCategoryTabs = (products) => {
       return copy;
     });
   };
-    /* ========== CUSTOMER LOGIC ========== */
+  /* ========== CUSTOMER LOGIC ========== */
   searchCustomerByPhone = async (phone) => {
     const { shopId } = this.state;
     if (!shopId || !phone) return;
@@ -834,50 +981,80 @@ buildCategoryTabs = (products) => {
       if (this.mounted) this.setState({ loadingCustomer: false });
     }
   };
-handleOutsideClick = (e) => {
-  if (!this.mounted) return;
-  if (!e.target.closest(".relative")) {
-    this.setState({ showNotifications: false });
-  }
-};
-toggleNotifications = () => {
-  this.setState((prev) => ({
-    showNotifications: !prev.showNotifications,
-  }));
-};
+  handleGoToPayment = () => {
+    const { invoices, activeIdx } = this.state;
+    const current = invoices[activeIdx];
+    if (!current || !current.orders?.length) {
+      alert("Không có sản phẩm để thanh toán!");
+      return;
+    }
+    const total = current.orders.reduce(
+      (sum, it) => sum + Number(it.qty || 0) * Number(it.price || 0),
+      0
+    );
+    const orderCache = {
+      ...current,
+      total,
+      createdAt: new Date().toISOString(),
+      customer: this.state.foundCustomer || null,
+    };
+    localStorage.setItem("lastOrderCache", JSON.stringify(orderCache));
 
-markAllAsRead = async () => {
-  const unreadIds = this.state.notifications
-    .filter((n) => !n.read)
-    .map((n) => n.id);
+    this.props.navigate("/payment?method=cash", {
+      state: {
+        total,
+        orders: current.orders,
+        customerId: this.state.foundCustomer?.customerId || null,
+        customerName: this.state.foundCustomer?.fullName || "Khách lẻ",
+        note: current.note || "",
+        paymentMethod: 1,
+      },
+    });
+  };
 
-  if (!unreadIds.length) return;
-  this.setState((prev) => ({
-    unreadCount: 0,
-    notifications: prev.notifications.map((n) => ({ ...n, read: true })),
-  }));
-  try {
-    await Promise.all(unreadIds.map((id) => this.markNotificationAsRead(id)));
-    console.log("✅ All notifications marked as read");
-  } catch (e) {
-    console.error("❌ Failed to mark some notifications:", e);
-  }
-};
+  handleOutsideClick = (e) => {
+    if (!this.mounted) return;
+    if (!e.target.closest(".relative")) {
+      this.setState({ showNotifications: false });
+    }
+  };
+  toggleNotifications = () => {
+    this.setState((prev) => ({
+      showNotifications: !prev.showNotifications,
+    }));
+  };
 
+  markAllAsRead = async () => {
+    const unreadIds = this.state.notifications
+      .filter((n) => !n.read)
+      .map((n) => n.id);
 
-handleNotificationClick = (id) => {
-  this.setState((prev) => ({
-    notifications: prev.notifications.map((n) =>
-      n.id === id ? { ...n, read: true } : n
-    ),
-    unreadCount: Math.max(
-      0,
-      prev.unreadCount - (prev.notifications.find((n) => n.id === id)?.read ? 0 : 1)
-    ),
-  }));
-  this.markNotificationAsRead(id);
-};
+    if (!unreadIds.length) return;
+    this.setState((prev) => ({
+      unreadCount: 0,
+      notifications: prev.notifications.map((n) => ({ ...n, read: true })),
+    }));
+    try {
+      await Promise.all(unreadIds.map((id) => this.markNotificationAsRead(id)));
+      console.log("✅ All notifications marked as read");
+    } catch (e) {
+      console.error("❌ Failed to mark some notifications:", e);
+    }
+  };
 
+  handleNotificationClick = (id) => {
+    this.setState((prev) => ({
+      notifications: prev.notifications.map((n) =>
+        n.id === id ? { ...n, read: true } : n
+      ),
+      unreadCount: Math.max(
+        0,
+        prev.unreadCount -
+          (prev.notifications.find((n) => n.id === id)?.read ? 0 : 1)
+      ),
+    }));
+    this.markNotificationAsRead(id);
+  };
 
   handleSelectCustomer = (c) => {
     this.setState({
@@ -887,20 +1064,38 @@ handleNotificationClick = (id) => {
     });
     localStorage.setItem("selectedCustomer", JSON.stringify(c));
   };
+  handleCheckout = () => {
+    const orderCache = {
+      orders: this.state.orders || [],
+      customerId: this.state.customerId || null,
+      customerName: this.state.customerName || "",
+      note: this.state.note || "",
+      total: (this.state.orders || []).reduce(
+        (sum, it) => sum + Number(it.qty || 0) * Number(it.price || 0),
+        0
+      ),
+    };
+    localStorage.setItem("orderCache", JSON.stringify(orderCache));
+    this.props.navigate("/payment?method=cash");
+  };
 
   clearCustomer = () => {
-  localStorage.removeItem("selectedCustomer");
-  this.setState({
-    foundCustomer: null,
-    customerSearch: "",
-  });
-};
+    localStorage.removeItem("selectedCustomer");
+    this.setState({
+      foundCustomer: null,
+      customerSearch: "",
+    });
+  };
 
   createCustomer = async () => {
     const { shopId, addingCustomer } = this.state;
     const token = localStorage.getItem("accessToken");
     if (!addingCustomer.fullName || !addingCustomer.phone)
-      this.showPopup("Thiếu thông tin", "Vui lòng nhập đủ họ tên và số điện thoại.", "warning");
+      this.showPopup(
+        "Thiếu thông tin",
+        "Vui lòng nhập đủ họ tên và số điện thoại.",
+        "warning"
+      );
 
     try {
       const payload = {
@@ -934,28 +1129,32 @@ handleNotificationClick = (id) => {
   };
 
   printTempBill = async () => {
-  const orders = this.getActiveOrders();
-  if (!orders.length) return this.showPopup("Thông báo", "Không có sản phẩm để in.", "warning");
+    const orders = this.getActiveOrders();
+    if (!orders.length)
+      return this.showPopup("Thông báo", "Không có sản phẩm để in.", "warning");
 
-  const order = {
-    id: "PHIẾU TẠM TÍNH",
-    total: orders.reduce((s, o) => s + o.price * o.qty, 0),
-    items: orders,
+    const order = {
+      id: "PHIẾU TẠM TÍNH",
+      total: orders.reduce((s, o) => s + o.price * o.qty, 0),
+      items: orders,
+    };
+
+    try {
+      const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
+      const shop = await PrintTemplate.getShopInfo();
+
+      const printer = new PrintService("lan", {
+        ip: "192.168.1.107",
+        port: 9100,
+      });
+      await printer.printOrder(order, shop);
+
+      this.showPopup("Thành công", "🖨️ Đã in phiếu tạm tính!", "success");
+    } catch (e) {
+      console.error("Lỗi in tạm tính:", e);
+      this.showPopup("Lỗi in", "Không thể in phiếu tạm tính.", "error");
+    }
   };
-
-  try {
-    const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
-    const shop = await PrintTemplate.getShopInfo();
-
-    const printer = new PrintService("lan", { ip: "192.168.1.107", port: 9100 });
-    await printer.printOrder(order, shop);
-
-    this.showPopup("Thành công", "🖨️ Đã in phiếu tạm tính!", "success");
-  } catch (e) {
-    console.error("Lỗi in tạm tính:", e);
-   this.showPopup("Lỗi in", "Không thể in phiếu tạm tính.", "error");
-  }
-};
 
   /* ===================== AUTH / MISC ===================== */
   logout = () => {
@@ -966,165 +1165,143 @@ handleNotificationClick = (id) => {
     this.props.navigate("/");
   };
 
- //ORDER API
-  buildOrderPayload = () => {
-  // shopId từ profile
-  let profile = null;
-  try {
-    profile =
-      JSON.parse(localStorage.getItem("userProfile") || "null") ||
-      JSON.parse(localStorage.getItem("auth") || "null")?.profile || null;
-  } catch {}
-  const shopId = Number(profile?.shopId || 0) || null;
+  //ORDER API
+  // buildOrderPayload = () => {
+  //   let profile = null;
+  //   try {
+  //     profile =
+  //       JSON.parse(localStorage.getItem("userProfile") || "null") ||
+  //       JSON.parse(localStorage.getItem("auth") || "null")?.profile ||
+  //       null;
+  //   } catch {}
+  //   const shopId = Number(profile?.shopId || 0) || null;
 
-  // shiftId từ auth/currentShift
-  let shiftId = null;
-  try {
-    const auth = JSON.parse(localStorage.getItem("auth") || "null");
-    if (auth?.currentShift?.shiftId != null) shiftId = Number(auth.currentShift.shiftId);
-    if (!shiftId && auth?.shiftId != null)   shiftId = Number(auth.shiftId);
-  } catch {}
-  if (!shiftId) {
-    const cur = JSON.parse(localStorage.getItem("currentShift") || "null");
-    if (cur?.shiftId != null) shiftId = Number(cur.shiftId);
-  }
+  //   // shiftId từ auth/currentShift
+  //   let shiftId = null;
+  //   try {
+  //     const auth = JSON.parse(localStorage.getItem("auth") || "null");
+  //     if (auth?.currentShift?.shiftId != null)
+  //       shiftId = Number(auth.currentShift.shiftId);
+  //     if (!shiftId && auth?.shiftId != null) shiftId = Number(auth.shiftId);
+  //   } catch {}
+  //   if (!shiftId) {
+  //     const cur = JSON.parse(localStorage.getItem("currentShift") || "null");
+  //     if (cur?.shiftId != null) shiftId = Number(cur.shiftId);
+  //   }
 
-  const orders = this.state.invoices[this.state.activeIdx]?.orders || [];
+  //   const orders = this.state.invoices[this.state.activeIdx]?.orders || [];
 
-  const issues = this.validateCartLines(orders);
-  if (issues.length) {
-    console.group("%c[CART] Validation issues", "color:#ef4444;font-weight:700");
-    console.table(issues.map(x => ({ idx: x.idx, reason: x.reason, name: x.line?.name })));
-    console.groupEnd();
-  }
+  //   const issues = this.validateCartLines(orders);
+  //   if (issues.length) {
+  //     console.group(
+  //       "%c[CART] Validation issues",
+  //       "color:#ef4444;font-weight:700"
+  //     );
+  //     console.table(
+  //       issues.map((x) => ({
+  //         idx: x.idx,
+  //         reason: x.reason,
+  //         name: x.line?.name,
+  //       }))
+  //     );
+  //     console.groupEnd();
+  //   }
 
-  // Map có fallback productUnitId
-  const mapped = orders.map((it, idx) => {
-    const pid  = Number(it.id || 0);
-    const puid = Number(it.productUnitId ?? it.unitOptions?.[0]?.productUnitId ?? 0);
-    const qty  = Number(it.qty || 0);
-    return {
-      __debug: { idx, name: it.name }, 
-      quantity: qty,
-      productUnitId: puid,
-      productId: pid,
-    };
-  });
+  //   // Map có fallback productUnitId
+  //   const mapped = orders.map((it, idx) => {
+  //     const pid = Number(it.id || 0);
+  //     const puid = Number(
+  //       it.productUnitId ?? it.unitOptions?.[0]?.productUnitId ?? 0
+  //     );
+  //     const qty = Number(it.qty || 0);
+  //     return {
+  //       __debug: { idx, name: it.name },
+  //       quantity: qty,
+  //       productUnitId: puid,
+  //       productId: pid,
+  //     };
+  //   });
 
-  const orderDetails = mapped.filter(d => d.productId > 0 && d.productUnitId > 0 && d.quantity > 0);
+  //   const orderDetails = mapped.filter(
+  //     (d) => d.productId > 0 && d.productUnitId > 0 && d.quantity > 0
+  //   );
 
-  if (orderDetails.length !== orders.length) {
-    const dropped = mapped
-      .map((d, i) => ({ i, ok: d.productId > 0 && d.productUnitId > 0 && d.quantity > 0, name: d.__debug.name }))
-      .filter(x => !x.ok);
-    console.warn("[CART] Dropped invalid lines:", dropped);
-  }
+  //   if (orderDetails.length !== orders.length) {
+  //     const dropped = mapped
+  //       .map((d, i) => ({
+  //         i,
+  //         ok: d.productId > 0 && d.productUnitId > 0 && d.quantity > 0,
+  //         name: d.__debug.name,
+  //       }))
+  //       .filter((x) => !x.ok);
+  //     console.warn("[CART] Dropped invalid lines:", dropped);
+  //   }
 
-  this.logCartMap(orders, orderDetails);
+  //   this.logCartMap(orders, orderDetails);
 
-  const payload = {
-    customerId: this.state.foundCustomer?.customerId ?? null,                       // Khách lẻ
-    paymentMethod: this.state.payMethodId || 1, // tạm tiền mặt
-    status: 0,                              // chờ thanh toán
-    shiftId: shiftId ?? null,               // từ auth
-    shopId,                                 // từ profile
-    voucherId: null,
-    discount: null,
-    note: "",
-    orderDetails,
-  };
+  //   const payload = {
+  //     customerId: this.state.foundCustomer?.customerId ?? null, // Khách lẻ
+  //     paymentMethod: this.state.payMethodId || 1, // tạm tiền mặt
+  //     status: 0, // chờ thanh toán
+  //     shiftId: shiftId ?? null, // từ auth
+  //     shopId, // từ profile
+  //     voucherId: null,
+  //     discount: null,
+  //     note: "",
+  //     orderDetails,
+  //   };
 
-  console.groupCollapsed("%c[BUILD] Final payload /api/orders", "color:#22c55e;font-weight:700");
-  console.log(payload);
-  console.groupEnd();
+  //   console.groupCollapsed(
+  //     "%c[BUILD] Final payload /api/orders",
+  //     "color:#22c55e;font-weight:700"
+  //   );
+  //   console.log(payload);
+  //   console.groupEnd();
 
-  return payload;
-};
-
-
-submitOrder = async () => {
-  this.setState({ loading: true, error: "" });
-// 🔍 Kiểm tra trạng thái ca làm việc
-  const currentShift = JSON.parse(localStorage.getItem("currentShift") || "{}");
-  if (currentShift?.status === "closed") {
-    this.showPopup("Ca làm việc đóng", "Vui lòng mở ca mới trước khi tạo đơn hàng.", "warning");
-    this.setState({ loading: false });
-    return;
-  }
-  const token = localStorage.getItem("accessToken") || "";
-  const payload = this.buildOrderPayload();
-
-  try {
-    console.groupCollapsed("%c[POST] /api/orders request", "color:#06b6d4;font-weight:700");
-    console.log("Headers: {Content-Type: application/json, Authorization: Bearer ...}");
-    console.log("Body:", JSON.stringify(payload, null, 2));
-    console.groupEnd();
-
-    const res = await fetch(`${API_URL}/api/orders`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        accept: "application/json, text/plain, */*",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      mode: "cors",
-      body: JSON.stringify(payload),
-    });
-
-    const data = await this.safeParse(res);
-
-    console.groupCollapsed("%c[POST] /api/orders response", "color:#ea580c;font-weight:700");
-    console.log("status:", res.status, res.ok);
-    console.log("body:", data);
-    console.groupEnd();
-
-    if (!res.ok) {
-      if (data?.errors) {
-        console.warn("[POST] validation errors:", data.errors);
-      }
-      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-    }
-
-    const orderId = data?.orderId ?? data?.id ?? data?.data?.orderId ?? 0;
-    const currentOrders = this.getActiveOrders();
-
-    this.props.navigate("/payment", {
-      state: {
-        orderId,
-        customerId: payload.customerId ?? null,
-        note: payload.note || "",
-        paymentMethod: payload.paymentMethod ?? 1,
-        orders: currentOrders,
-        total: currentOrders.reduce((s, it) => s + Number(it.price) * Number(it.qty), 0),
-      },
-    });
-    this.clearCustomer();
-  } catch (e) {
-    console.error("[Orders] POST /api/orders error:", e);
-    this.setState({ error: e.message || "Lỗi tạo đơn hàng" });
-  } finally {
-    this.setState({ loading: false });
-  }
-};
-
-
+  //   return payload;
+  // };
 
   /* ===================== RENDER ===================== */
   render() {
-
     const typeStyles = {
-  0: { bg: "bg-[#F0FCFB]", text: "text-[#007E85]", icon: <Bell className="w-5 h-5 text-[#00A8B0]" /> },
-  1: { bg: "bg-yellow-50", text: "text-yellow-800", icon: <AlertCircle className="w-5 h-5 text-yellow-500" /> },
-  2: { bg: "bg-pink-50", text: "text-pink-700", icon: <Heart className="w-5 h-5 text-pink-500" /> },
-  3: { bg: "bg-blue-50", text: "text-blue-700", icon: <Star className="w-5 h-5 text-blue-500" /> },
-  4: { bg: "bg-green-50", text: "text-green-700", icon: <CheckCircle className="w-5 h-5 text-green-500" /> },
-};
+      0: {
+        bg: "bg-[#F0FCFB]",
+        text: "text-[#007E85]",
+        icon: <Bell className="w-5 h-5 text-[#00A8B0]" />,
+      },
+      1: {
+        bg: "bg-yellow-50",
+        text: "text-yellow-800",
+        icon: <AlertCircle className="w-5 h-5 text-yellow-500" />,
+      },
+      2: {
+        bg: "bg-pink-50",
+        text: "text-pink-700",
+        icon: <Heart className="w-5 h-5 text-pink-500" />,
+      },
+      3: {
+        bg: "bg-blue-50",
+        text: "text-blue-700",
+        icon: <Star className="w-5 h-5 text-blue-500" />,
+      },
+      4: {
+        bg: "bg-green-50",
+        text: "text-green-700",
+        icon: <CheckCircle className="w-5 h-5 text-green-500" />,
+      },
+    };
 
     const {
-      invoices, activeIdx,
-      categories, catError, loading,
-      activeTab, productsByTab, search,
-      shopId, authErr,
+      invoices,
+      activeIdx,
+      categories,
+      catError,
+      loading,
+      activeTab,
+      productsByTab,
+      search,
+      shopId,
+      authErr,
     } = this.state;
 
     const orders = invoices[activeIdx]?.orders || [];
@@ -1134,9 +1311,11 @@ submitOrder = async () => {
       <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40]xl p-3">
         <div className="flex gap-[5px] bg-[#012E40] h-full">
           {/* LEFT */}
-          <div className="w-1/2 flex flex-col min-h-0">
+          <div className="w-1/2 flex flex-col min-h-0 ">
             <div className="flex items-center justify-between px-4 py-3 mb-2">
-              <button className="px-5 py-2 bg-white text-black rounded-[15px] font-semibold">Bán hàng</button>
+              <button className="px-5 py-2 bg-white text-black rounded-[15px] font-semibold">
+                Bán hàng
+              </button>
               <div className="relative w-1/2 ml-[4px]">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-[#DCDCDC]" />
                 <Input
@@ -1150,22 +1329,42 @@ submitOrder = async () => {
 
             <div className="flex-1 bg-white rounded-xl min-h-0 flex flex-col">
               {!shopId ? (
-                <div className="p-4 text-sm text-red-600">{authErr || "Chưa xác định được shopId."}</div>
+                <div className="p-4 text-sm text-red-600">
+                  {authErr || "Chưa xác định được shopId."}
+                </div>
               ) : !categories.length ? (
                 <div className="p-4 text-sm">
                   {catError ? (
                     <div className="flex items-center justify-between">
                       <span className="text-red-600">{catError}</span>
-                      <Button size="sm" variant="outline" onClick={() => this.fetchCategories()}>Thử lại</Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => this.fetchCategories()}
+                      >
+                        Thử lại
+                      </Button>
                     </div>
                   ) : (
-                    <span className="text-gray-500">{loading ? "Đang tải danh mục…" : "Không có danh mục"}</span>
+                    <span className="text-gray-500">
+                      {loading ? "Đang tải danh mục…" : "Không có danh mục"}
+                    </span>
                   )}
                 </div>
               ) : (
-                <Tabs value={activeTab} onValueChange={(v) => this.setActiveTab(v)} className="flex flex-col h-full">
-                  <div className="sticky top-0 z-10 bg-white">
-                    <TabsList className="flex items-center gap-10 px-6 bg-white border-b overflow-x-auto rounded-tl-xl rounded-tr-xl">
+                <Tabs
+                  value={activeTab}
+                  onValueChange={(v) => this.setActiveTab(v)}
+                  className="flex flex-col h-full"
+                >
+                  <div className="sticky top-0 z-10 bg-white rounded-t-xl overflow-hidden shadow-sm -mt-[3px]">
+                    <TabsList
+                      className="
+                        flex items-center gap-10 px-6
+                        bg-white border-b border-t border-t-transparent overflow-x-auto
+                        rounded-t-xl shadow-sm
+                      "
+                    >
                       {categories.map((c) => (
                         <TabsTrigger
                           key={c.id}
@@ -1186,29 +1385,64 @@ submitOrder = async () => {
 
                   <div className="flex-1 overflow-y-auto">
                     {categories.map((c) => {
-                      const entry = productsByTab[c.value] || { items: [], loading: false, error: "" };
-                      const list = c.id === "all" ? (entry.items?.length ? this.getFiltered(c.value) : []) : this.getFiltered(c.value);
+                      const entry = productsByTab[c.value] || {
+                        items: [],
+                        loading: false,
+                        error: "",
+                      };
+                      const list =
+                        c.id === "all"
+                          ? entry.items?.length
+                            ? this.getFiltered(c.value)
+                            : []
+                          : this.getFiltered(c.value);
 
                       return (
-                        <TabsContent key={c.id} value={c.value} className="p-4 grid grid-cols-4 gap-4">
+                        <TabsContent
+                          key={c.id}
+                          value={c.value}
+                          className="p-4 grid grid-cols-4 gap-4"
+                        >
                           {entry.loading ? (
-                            <div className="col-span-full text-sm text-gray-500">Đang tải sản phẩm…</div>
+                            <div className="col-span-full text-sm text-gray-500">
+                              Đang tải sản phẩm…
+                            </div>
                           ) : entry.error ? (
                             <div className="col-span-full flex items-center justify-between">
-                              <span className="text-red-600">{entry.error}</span>
-                              <Button size="sm" variant="outline" onClick={() => this.loadProductsFor(c.value)}>Thử lại</Button>
+                              <span className="text-red-600">
+                                {entry.error}
+                              </span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => this.loadProductsFor(c.value)}
+                              >
+                                Thử lại
+                              </Button>
                             </div>
                           ) : list && list.length ? (
                             list.map((p) => (
-                              <Card key={`${c.id}-${p.id}`} className="relative overflow-hidden">
+                              <Card className="relative rounded-xl">
+                                {p.hasPromo &&
+                                  p.discountPercent > 0 &&
+                                  p.promoType !== 1 && (
+                                    <div className="absolute top-2 right-2 bg-gradient-to-r from-red-500 to-orange-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-md shadow-md">
+                                      -{p.discountPercent}%
+                                    </div>
+                                  )}
                                 <CardContent className="p-2 flex flex-col items-center text-center">
                                   <img
-  src={p.img || "https://placehold.co/150x150?text=No+Image"}
-  alt={p.name}
-  className="w-full h-32 object-cover rounded-lg"
-  onError={(e) => { e.currentTarget.src = "https://placehold.co/150x150?text=No+Image"; }}
-/>
-
+                                    src={
+                                      p.img ||
+                                      "https://placehold.co/150x150?text=No+Image"
+                                    }
+                                    alt={p.name}
+                                    className="w-full h-32 object-cover rounded-lg"
+                                    onError={(e) => {
+                                      e.currentTarget.src =
+                                        "https://placehold.co/150x150?text=No+Image";
+                                    }}
+                                  />
 
                                   {/* Tên sản phẩm */}
                                   <h3 className="mt-2 text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
@@ -1216,8 +1450,22 @@ submitOrder = async () => {
                                   </h3>
 
                                   {/* Giá */}
-                                  <p className="text-orange-500 font-bold min-h-[1.5rem]">{fmt.format(p.price)}đ</p>
-
+                                  <div className="min-h-[1.5rem] flex flex-col items-center">
+                                    {p.hasPromo ? (
+                                      <>
+                                        <span className="text-gray-400 text-sm line-through">
+                                          {fmt.format(p.price)}đ
+                                        </span>
+                                        <span className="text-orange-500 font-bold">
+                                          {fmt.format(p.promoPrice)}đ
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <span className="text-orange-500 font-bold">
+                                        {fmt.format(p.price)}đ
+                                      </span>
+                                    )}
+                                  </div>
                                   {/* Đơn vị */}
                                   <div className="text-xs text-gray-500 min-h-[1rem]">
                                     Đơn vị mặc định: {p.unit || "—"}
@@ -1228,14 +1476,21 @@ submitOrder = async () => {
                                     <div className="flex items-center text-yellow-500 text-xs">
                                       <Star size={14} fill="currentColor" /> 4.5
                                     </div>
-                                    <Button size="sm" onClick={() => this.addToOrder(p)}>Add</Button>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => this.addToOrder(p)}
+                                    >
+                                      Add
+                                    </Button>
                                   </div>
                                 </CardContent>
                               </Card>
                             ))
                           ) : (
                             <div className="col-span-full text-sm text-gray-500">
-                              {c.id === "all" ? "Chưa có sản phẩm." : `Chưa có sản phẩm cho “${c.name}”.`}
+                              {c.id === "all"
+                                ? "Chưa có sản phẩm."
+                                : `Chưa có sản phẩm cho “${c.name}”.`}
                             </div>
                           )}
                         </TabsContent>
@@ -1286,11 +1541,15 @@ submitOrder = async () => {
               </div>
 
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <IconBtn title="Âm lượng"><Volume2 className="w-5 h-5" /></IconBtn>
-                <IconBtn title="Cảnh báo"><AlertCircle className="w-5 h-5" /></IconBtn>
+                <IconBtn title="Âm lượng">
+                  <Volume2 className="w-5 h-5" />
+                </IconBtn>
+                <IconBtn title="Cảnh báo">
+                  <AlertCircle className="w-5 h-5" />
+                </IconBtn>
                 <IconBtn title="In hoá đơn" onClick={this.printTempBill}>
-  <Printer className="w-5 h-5" />
-</IconBtn>
+                  <Printer className="w-5 h-5" />
+                </IconBtn>
 
                 <div className="relative">
                   <IconBtn title="Thông báo" onClick={this.toggleNotifications}>
@@ -1331,7 +1590,9 @@ submitOrder = async () => {
                             return (
                               <div
                                 key={n.id}
-                                onClick={() => this.handleNotificationClick(n.id)}
+                                onClick={() =>
+                                  this.handleNotificationClick(n.id)
+                                }
                                 className={`
                                   animate-in fade-in-0 zoom-in-95 duration-200
                                   px-4 py-3 flex gap-3 border-b cursor-pointer transition hover:brightness-95
@@ -1376,7 +1637,9 @@ submitOrder = async () => {
                   )}
                 </div>
                 <div className="ml-1 flex items-center">
-                  <button className="px-2.5 h-9 rounded-md bg-red-500 hover:bg-red-600 text-white text-sm font-semibold">VN</button>
+                  <button className="px-2.5 h-9 rounded-md bg-red-500 hover:bg-red-600 text-white text-sm font-semibold">
+                    VN
+                  </button>
                   <button className="w-8 h-9 grid place-items-center text-white/90 hover:text-white">
                     <ChevronDown className="w-4 h-4" />
                   </button>
@@ -1387,105 +1650,114 @@ submitOrder = async () => {
                 >
                   <Menu className="w-6 h-6" />
                 </IconBtn>
-                <IconBtn title="Đăng xuất" onClick={this.logout}><LogOut className="w-5 h-5" /></IconBtn>
+                <IconBtn title="Đăng xuất" onClick={this.logout}>
+                  <LogOut className="w-5 h-5" />
+                </IconBtn>
               </div>
             </div>
 
             <div className="flex-1 flex flex-col bg-white rounded-xl overflow-hidden">
               {/* === THANH KHÁCH HÀNG FULL WIDTH === */}
-<div className="flex items-center gap-3 w-full px-6 py-2 bg-white">
-  {/* Icon KH */}
-  <div className="w-8 h-8 rounded-md bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px] font-bold">
-    KH
-  </div>
+              <div className="flex items-center gap-3 w-full px-6 py-2 bg-white">
+                {/* Icon KH */}
+                <div className="w-8 h-8 rounded-md bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px] font-bold">
+                  KH
+                </div>
 
-  {/* Thông tin KH */}
-  <div className="flex items-center gap-2 flex-1 min-w-0">
-    {this.state.foundCustomer ? (
-      <div className="flex flex-col leading-tight truncate">
-        <div className="flex items-center gap-1 truncate">
-          <span className="font-semibold text-[#0c5e64] text-sm truncate">
-            {this.state.foundCustomer.fullName}
-          </span>
-          {this.state.foundCustomer.rankName && (
-            <span className="px-2 py-0.5 text-[10px] rounded-full bg-[#00A8B0]/10 text-[#00A8B0] font-medium whitespace-nowrap">
-              {this.state.foundCustomer.rankName}
-            </span>
-          )}
-        </div>
-        <span className="text-[11px] text-gray-500 truncate flex items-center gap-1">
-          <span className="text-pink-500 text-xs">📞</span>
-          {this.state.foundCustomer.phone}
-        </span>
-      </div>
-    ) : (
-      <span className="text-[#0c5e64] font-semibold text-sm">Khách lẻ</span>
-    )}
-  </div>
+                {/* Thông tin KH */}
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  {this.state.foundCustomer ? (
+                    <div className="flex flex-col leading-tight truncate">
+                      <div className="flex items-center gap-1 truncate">
+                        <span className="font-semibold text-[#0c5e64] text-sm truncate">
+                          {this.state.foundCustomer.fullName}
+                        </span>
+                        {this.state.foundCustomer.rankName && (
+                          <span className="px-2 py-0.5 text-[10px] rounded-full bg-[#00A8B0]/10 text-[#00A8B0] font-medium whitespace-nowrap">
+                            {this.state.foundCustomer.rankName}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-gray-500 truncate flex items-center gap-1">
+                        <span className="text-pink-500 text-xs">📞</span>
+                        {this.state.foundCustomer.phone}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-[#0c5e64] font-semibold text-sm">
+                      Khách lẻ
+                    </span>
+                  )}
+                </div>
 
-  {/* Ô tìm kiếm + nút bên phải */}
-  <div className="flex items-center gap-2 w-[55%] justify-end">
-    <div className="relative flex-1 min-w-[200px]">
-      <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-      <Input
-        placeholder="Nhập SĐT khác"
-        className="h-9 w-full rounded-full pl-9 pr-4 border border-gray-300 focus:border-[#00A8B0] focus-visible:ring-0 text-sm shadow-none"
-        value={this.state.customerSearch}
-        onChange={(e) => {
-          const v = e.target.value;
-          this.setState({ customerSearch: v });
-          if (v.length >= 5) this.searchCustomerByPhone(v);
-          else this.setState({ customerSuggestions: [] });
-        }}
-      />
+                {/* Ô tìm kiếm + nút bên phải */}
+                <div className="flex items-center gap-2 w-[55%] justify-end">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Nhập SĐT khác"
+                      className="h-9 w-full rounded-full pl-9 pr-4 border border-gray-300 focus:border-[#00A8B0] focus-visible:ring-0 text-sm shadow-none"
+                      value={this.state.customerSearch}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        this.setState({ customerSearch: v });
+                        if (v.length >= 5) this.searchCustomerByPhone(v);
+                        else this.setState({ customerSuggestions: [] });
+                      }}
+                    />
 
-      {/* Dropdown gợi ý khách hàng */}
-      {this.state.customerSuggestions.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-md max-h-48 overflow-y-auto">
-          {this.state.customerSuggestions.map((c) => (
-            <div
-              key={c.customerId}
-              onClick={() => this.handleSelectCustomer(c)}
-              className="px-3 py-2 hover:bg-[#E6FFFA] cursor-pointer text-sm"
-            >
-              <div className="font-semibold text-gray-800">{c.fullName}</div>
-              <div className="text-xs text-gray-500">📞 {c.phone}</div>
-              {c.rankName && (
-                <div className="text-xs text-[#00A8B0]">{c.rankName}</div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+                    {/* Dropdown gợi ý khách hàng */}
+                    {this.state.customerSuggestions.length > 0 && (
+                      <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-md max-h-48 overflow-y-auto">
+                        {this.state.customerSuggestions.map((c) => (
+                          <div
+                            key={c.customerId}
+                            onClick={() => this.handleSelectCustomer(c)}
+                            className="px-3 py-2 hover:bg-[#E6FFFA] cursor-pointer text-sm"
+                          >
+                            <div className="font-semibold text-gray-800">
+                              {c.fullName}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              📞 {c.phone}
+                            </div>
+                            {c.rankName && (
+                              <div className="text-xs text-[#00A8B0]">
+                                {c.rankName}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-    {this.state.foundCustomer ? (
-      <Button
-        variant="outline"
-        className="h-9 px-4 border-red-400 text-red-500 hover:bg-red-50 flex items-center justify-center rounded-full whitespace-nowrap"
-        onClick={this.clearCustomer}
-      >
-        <X className="w-4 h-4 mr-1" /> Bỏ
-      </Button>
-    ) : (
-      <Button
-        className="h-9 px-4 bg-[#00A8B0] text-white rounded-full hover:bg-[#00939a] flex items-center justify-center whitespace-nowrap"
-        onClick={() =>
-          this.setState({
-            showAddCustomer: true,
-            addingCustomer: {
-              ...this.state.addingCustomer,
-              phone: this.state.customerSearch,
-            },
-          })
-        }
-      >
-        <Plus className="w-4 h-4 mr-1" /> Thêm
-      </Button>
-    )}
-  </div>
-</div>
-
+                  {this.state.foundCustomer ? (
+                    <Button
+                      variant="outline"
+                      className="h-9 px-4 border-red-400 text-red-500 hover:bg-red-50 flex items-center justify-center rounded-full whitespace-nowrap"
+                      onClick={this.clearCustomer}
+                    >
+                      <X className="w-4 h-4 mr-1" /> Bỏ
+                    </Button>
+                  ) : (
+                    <Button
+                      className="h-9 px-4 bg-[#00A8B0] text-white rounded-full hover:bg-[#00939a] flex items-center justify-center whitespace-nowrap"
+                      onClick={() =>
+                        this.setState({
+                          showAddCustomer: true,
+                          addingCustomer: {
+                            ...this.state.addingCustomer,
+                            phone: this.state.customerSearch,
+                          },
+                        })
+                      }
+                    >
+                      <Plus className="w-4 h-4 mr-1" /> Thêm
+                    </Button>
+                  )}
+                </div>
+              </div>
 
               <div className="px-5 py-2 text-sm text-gray-700 font-semibold border-b">
                 <div className="grid grid-cols-[1fr_110px_150px_120px_150px_40px]">
@@ -1500,7 +1772,9 @@ submitOrder = async () => {
 
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5 ghost-scrollbar">
                 {orders.length === 0 ? (
-                  <div className="text-center text-gray-500 py-16">Chưa có sản phẩm trong đơn hàng</div>
+                  <div className="text-center text-gray-500 py-16">
+                    Chưa có sản phẩm trong đơn hàng
+                  </div>
                 ) : (
                   orders.map((o, i) => {
                     const line = o.price * o.qty;
@@ -1508,20 +1782,40 @@ submitOrder = async () => {
                       <div key={`${o.id}-${o.productUnitId || "base"}-${i}`}>
                         <div className="grid items-center grid-cols-[1fr_110px_150px_120px_150px_40px]">
                           <div className="flex items-center gap-2">
-                            <span className="text-gray-600 font-medium">{i + 1}.</span>
+                            <span className="text-gray-600 font-medium">
+                              {i + 1}.
+                            </span>
                             <span className="font-semibold">{o.name}</span>
                           </div>
 
-                          <div className="text-center">{fmt.format(o.price)}</div>
+                          <div className="text-center">
+                            {fmt.format(o.price)}
+                          </div>
 
                           <div className="flex justify-center">
                             <select
                               className="h-8 px-2 border rounded-md text-sm"
-                              value={o.productUnitId ?? (o.unitOptions?.[0]?.productUnitId || "")}
-                              onChange={(e) => this.changeOrderUnit(i, Number(e.target.value))}
+                              value={
+                                o.productUnitId ??
+                                (o.unitOptions?.[0]?.productUnitId || "")
+                              }
+                              onChange={(e) =>
+                                this.changeOrderUnit(i, Number(e.target.value))
+                              }
                             >
-                              {(o.unitOptions || [{ productUnitId: o.productUnitId, unitName: o.unit, price: o.price }]).map(u => (
-                                <option key={u.productUnitId} value={u.productUnitId}>
+                              {(
+                                o.unitOptions || [
+                                  {
+                                    productUnitId: o.productUnitId,
+                                    unitName: o.unit,
+                                    price: o.price,
+                                  },
+                                ]
+                              ).map((u) => (
+                                <option
+                                  key={u.productUnitId}
+                                  value={u.productUnitId}
+                                >
                                   {u.unitName}
                                 </option>
                               ))}
@@ -1529,7 +1823,12 @@ submitOrder = async () => {
                           </div>
 
                           <div className="flex items-center justify-center gap-1">
-                            <button onClick={() => this.decQty(i)} className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 font-bold">−</button>
+                            <button
+                              onClick={() => this.decQty(i)}
+                              className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 font-bold"
+                            >
+                              −
+                            </button>
                             <input
                               value={o.qty}
                               onChange={(e) => {
@@ -1540,10 +1839,17 @@ submitOrder = async () => {
                               inputMode="numeric"
                               pattern="[0-9]*"
                             />
-                            <button onClick={() => this.incQty(i)} className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 font-bold">+</button>
+                            <button
+                              onClick={() => this.incQty(i)}
+                              className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 font-bold"
+                            >
+                              +
+                            </button>
                           </div>
 
-                          <div className="text-right font-bold">{fmt.format(line)} VND</div>
+                          <div className="text-right font-bold">
+                            {fmt.format(line)} VND
+                          </div>
 
                           <div className="flex justify-center">
                             <button
@@ -1571,82 +1877,89 @@ submitOrder = async () => {
               <div className="border-t px-6 py-3">
                 <div className="flex items-center justify-end gap-2 text-base">
                   <span className="text-gray-700">Tổng cộng</span>
-                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#00A8B0] text-white">$</span>
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#00A8B0] text-white">
+                    $
+                  </span>
                   <span className="font-bold">{fmt.format(total)} VND</span>
                 </div>
                 <div className="pt-3 flex items-center gap-4">
-                  <Button variant="outline" className="rounded-xl border-[#00A8B0] text-[#00A8B0] w-[220px]">
+                  <Button
+                    variant="outline"
+                    className="rounded-xl border-[#00A8B0] text-[#00A8B0] w-[220px]"
+                  >
                     Thông báo
                   </Button>
                   <Button
-  className="rounded-xl bg-[#00A8B0] flex-1"
-  onClick={this.submitOrder}
-  disabled={(this.state.invoices[this.state.activeIdx]?.orders?.length ?? 0) === 0}
->
-  Thanh toán
-</Button>
+                    className="rounded-xl bg-[#00A8B0] flex-1"
+                    disabled={
+                      (this.state.invoices[this.state.activeIdx]?.orders
+                        ?.length ?? 0) === 0
+                    }
+                    onClick={() => this.handleGoToPayment()}
+                  >
+                    Thanh toán
+                  </Button>
                 </div>
               </div>
             </div>
           </div>
         </div>
         {/* MODAL THÊM KHÁCH HÀNG */}
-{this.state.showAddCustomer && (
-  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div className="bg-white p-6 rounded-xl w-[400px] shadow-2xl">
-      <h3 className="text-lg font-bold mb-4 text-[#007E85]">
-        ➕ Thêm khách hàng mới
-      </h3>
-      <div className="space-y-3">
-        <Input
-          placeholder="Họ tên"
-          value={this.state.addingCustomer.fullName}
-          onChange={(e) =>
-            this.setState({
-              addingCustomer: {
-                ...this.state.addingCustomer,
-                fullName: e.target.value,
-              },
-            })
-          }
-        />
-        <Input
-          placeholder="Số điện thoại"
-          value={this.state.addingCustomer.phone}
-          readOnly
-        />
-        <Input
-          placeholder="Email"
-          value={this.state.addingCustomer.email}
-          onChange={(e) =>
-            this.setState({
-              addingCustomer: {
-                ...this.state.addingCustomer,
-                email: e.target.value,
-              },
-            })
-          }
-        />
-      </div>
+        {this.state.showAddCustomer && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl w-[400px] shadow-2xl">
+              <h3 className="text-lg font-bold mb-4 text-[#007E85]">
+                ➕ Thêm khách hàng mới
+              </h3>
+              <div className="space-y-3">
+                <Input
+                  placeholder="Họ tên"
+                  value={this.state.addingCustomer.fullName}
+                  onChange={(e) =>
+                    this.setState({
+                      addingCustomer: {
+                        ...this.state.addingCustomer,
+                        fullName: e.target.value,
+                      },
+                    })
+                  }
+                />
+                <Input
+                  placeholder="Số điện thoại"
+                  value={this.state.addingCustomer.phone}
+                  readOnly
+                />
+                <Input
+                  placeholder="Email"
+                  value={this.state.addingCustomer.email}
+                  onChange={(e) =>
+                    this.setState({
+                      addingCustomer: {
+                        ...this.state.addingCustomer,
+                        email: e.target.value,
+                      },
+                    })
+                  }
+                />
+              </div>
 
-      <div className="flex justify-end gap-3 mt-5">
-        <Button
-          variant="outline"
-          onClick={() => this.setState({ showAddCustomer: false })}
-        >
-          Hủy
-        </Button>
-        <Button
-          className="bg-[#00A8B0] text-white"
-          onClick={this.createCustomer}
-        >
-          Lưu
-        </Button>
-      </div>
-    </div>
-  </div>
-)}
-
+              <div className="flex justify-end gap-3 mt-5">
+                <Button
+                  variant="outline"
+                  onClick={() => this.setState({ showAddCustomer: false })}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  className="bg-[#00A8B0] text-white"
+                  onClick={this.createCustomer}
+                >
+                  Lưu
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

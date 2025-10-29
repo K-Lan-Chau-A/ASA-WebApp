@@ -20,8 +20,11 @@ export default class PrintTemplate {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
 
-      const shopRaw = Array.isArray(data.items) ? data.items[0] : null;
-      if (!shopRaw) throw new Error("Không tìm thấy dữ liệu shop.");
+      const shopRaw = Array.isArray(data.items)
+        ? data.items[0]
+        : data.item || data || null;
+      if (!shopRaw || !shopRaw.shopId)
+        throw new Error("Không tìm thấy dữ liệu shop.");
 
       const shop = {
         id: shopRaw.shopId,
@@ -40,8 +43,42 @@ export default class PrintTemplate {
       return { name: "Cửa hàng của bạn", address: "Chưa có địa chỉ" };
     }
   }
+  static async getCustomerInfo(customerId) {
+    if (!customerId) return null;
+    const token = localStorage.getItem("accessToken");
+    try {
+      const res = await fetch(
+        `${API_URL}/api/customers?CustomerId=${customerId}`,
+        {
+          headers: {
+            accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const data = await res.json();
+      const raw = Array.isArray(data.items) ? data.items[0] : data;
+      return {
+        name: raw.fullName || raw.name || "",
+        phone: raw.phoneNumber || "",
+        address: raw.address || "",
+      };
+    } catch (e) {
+      console.warn("[PrintTemplate] ⚠️ getCustomerInfo:", e.message);
+      return null;
+    }
+  }
 
   static async buildReceipt(order, shop = null) {
+    if (order.customerId && !order.customerName) {
+      const customer = await this.getCustomerInfo(order.customerId);
+      if (customer) {
+        order.customerName = customer.name;
+        order.customerPhone = customer.phone;
+        order.customerAddress = customer.address;
+      }
+    }
+
     if (!shop) shop = await this.getShopInfo();
 
     const fmt = new Intl.NumberFormat("vi-VN");
@@ -69,6 +106,14 @@ export default class PrintTemplate {
     const invoiceNo = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, "0")}${now.getDate().toString().padStart(2, "0")}${order.id ?? "0000"}`;
     out += `Thời gian đặt hàng: ${dateStr} ${timeStr}\n`;
     out += line + "\n";
+    if (order.customerName) {
+      out += `Khách hàng: ${order.customerName}\n`;
+      if (order.customerPhone) out += `SĐT: ${order.customerPhone}\n`;
+      if (order.customerAddress) out += `Địa chỉ: ${order.customerAddress}\n`;
+    } else {
+      out += `Khách hàng: Khách lẻ\n`;
+    }
+    out += line + "\n";
 
     // ===== DANH SÁCH SẢN PHẨM =====
     out += "Tên món\n";
@@ -91,41 +136,65 @@ export default class PrintTemplate {
 
       out += line + "\n";
     });
-
     // ===== TỔNG KẾT =====
     const itemCount = (order.items || []).reduce((s, i) => s + i.qty, 0);
-    const subTotal = order.total || 0;
-    const discount = order.discount || 0;
-    const grandTotal = subTotal - discount;
+    const subTotal = (order.items || []).reduce(
+      (s, i) => s + i.price * i.qty,
+      0
+    );
+
+    const voucherValue = order.voucherValue || 0; // ✅ giảm tiền từ voucher
+    const manualDiscountPercent = order.discount || 0; // ✅ chiết khấu tay %
+    const manualDiscountValue =
+      manualDiscountPercent > 0
+        ? Math.round((subTotal * manualDiscountPercent) / 100)
+        : 0;
+
+    const totalDiscount = voucherValue + manualDiscountValue;
+    const grandTotal = subTotal - totalDiscount;
 
     out += `Tổng sản phẩm: ${itemCount}\n`;
     out += `Tổng cộng:           ${fmt.format(subTotal)} đ\n`;
-    if (discount > 0)
-      out += `Giảm giá:            -${fmt.format(discount)} đ\n`;
-    out += `Thành tiền:          ${fmt.format(grandTotal)} đ\n`; c 
+
+    if (order.voucherCode && voucherValue > 0) {
+      out += `Mã giảm giá: ${order.voucherCode}\n`;
+      out += `Giảm voucher: -${fmt.format(voucherValue)} đ\n`;
+    }
+
+    if (manualDiscountPercent > 0) {
+      out += `Chiết khấu: ${manualDiscountPercent}% (-${fmt.format(manualDiscountValue)} đ)\n`;
+    }
+
+    if (totalDiscount > 0) {
+      out += `Tổng giảm:          -${fmt.format(totalDiscount)} đ\n`;
+    }
+
+    out += `Thành tiền:          ${fmt.format(grandTotal)} đ\n`;
     out += line + "\n";
+
     const payLabel =
-  order.method === "cash"
-    ? "TIỀN MẶT"
-    : order.method === "qr"
-    ? "CHUYỂN KHOẢN"
-    : order.method === "nfc"
-    ? "NFC"
-    : order.method === "atm"
-    ? "ATM"
-    : "KHÁC";
+      order.method === "cash"
+        ? "TIỀN MẶT"
+        : order.method === "qr"
+          ? "CHUYỂN KHOẢN"
+          : order.method === "nfc"
+            ? "NFC"
+            : order.method === "atm"
+              ? "ATM"
+              : "KHÁC";
 
-out += `Phương thức: ${payLabel}\n`;
+    out += `Phương thức: ${payLabel}\n`;
 
-if (order.method === "cash") {
-  const received =
-    order.received != null ? order.received : order.total;
-  const change =
-    order.change != null ? order.change : Math.max(0, received - order.total);
+    if (order.method === "cash") {
+      const received = order.received != null ? order.received : order.total;
+      const change =
+        order.change != null
+          ? order.change
+          : Math.max(0, received - order.total);
 
-  out += `Tiền khách đưa:     ${fmt.format(received)} đ\n`;
-  out += `Tiền thừa:          ${fmt.format(change)} đ\n`;
-}
+      out += `Tiền khách đưa:     ${fmt.format(received)} đ\n`;
+      out += `Tiền thừa:          ${fmt.format(change)} đ\n`;
+    }
 
     // ===== FOOTER =====
     out += "\n";
@@ -139,32 +208,67 @@ if (order.method === "cash") {
 
     return out;
   }
-static async buildReceiptHTML(order, shop = null) {
-  if (!shop) shop = await this.getShopInfo();
-  const fmt = new Intl.NumberFormat("vi-VN");
-  const now = new Date();
-  const dateStr = now.toLocaleDateString("vi-VN");
-  const timeStr = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  static async buildReceiptHTML(order, shop = null) {
+    if (order.customerId && !order.customerName) {
+      const customer = await this.getCustomerInfo(order.customerId);
+      if (customer) {
+        order.customerName = customer.name;
+        order.customerPhone = customer.phone;
+        order.customerAddress = customer.address;
+      }
+    }
 
-  const payLabel =
-    order.method === "cash" ? "TIỀN MẶT" :
-    order.method === "qr" ? "CHUYỂN KHOẢN" :
-    order.method === "nfc" ? "NFC" :
-    order.method === "atm" ? "ATM" : "KHÁC";
+    if (!shop) shop = await this.getShopInfo();
+    const fmt = new Intl.NumberFormat("vi-VN");
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("vi-VN");
+    const timeStr = now.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
-  const received = order.method === "cash"
-    ? (order.received > 0 ? order.received : order.total)
-    : null;
-  const change = order.method === "cash"
-    ? Math.max(0, (received || order.total) - order.total)
-    : null;
+    const payLabel =
+      order.method === "cash"
+        ? "TIỀN MẶT"
+        : order.method === "qr"
+          ? "CHUYỂN KHOẢN"
+          : order.method === "nfc"
+            ? "NFC"
+            : order.method === "atm"
+              ? "ATM"
+              : "KHÁC";
 
- const qrUrl =
-  order.qrUrl ||
-  shop.qrcode ||
-  `https://img.vietqr.io/image/${shop.bankCode }-${shop.bankAccount}-compact2.png?amount=${order.total}&addInfo=Order%20${order.id}&accountName=${encodeURIComponent(shop.name)}&size=600`;
-   
-  return `
+    const received =
+      order.method === "cash"
+        ? order.received > 0
+          ? order.received
+          : order.total
+        : null;
+    const change =
+      order.method === "cash"
+        ? Math.max(0, (received || order.total) - order.total)
+        : null;
+
+    // ==== GIẢM GIÁ ====
+    const subTotal = (order.items || []).reduce(
+      (s, i) => s + i.price * i.qty,
+      0
+    );
+    const voucherValue = order.voucherValue || 0;
+    const manualDiscountPercent = order.discount || 0;
+    const manualDiscountValue =
+      manualDiscountPercent > 0
+        ? Math.round((subTotal * manualDiscountPercent) / 100)
+        : 0;
+    const totalDiscount = voucherValue + manualDiscountValue;
+    const grandTotal = subTotal - totalDiscount;
+
+    const qrUrl =
+      order.qrUrl ||
+      shop.qrcode ||
+      `https://img.vietqr.io/image/${shop.bankCode}-${shop.bankAccount}-compact2.png?amount=${order.total}&addInfo=Order%20${order.id}&accountName=${encodeURIComponent(shop.name)}&size=600`;
+
+    return `
 <html>
 <head>
   <meta charset="utf-8">
@@ -177,82 +281,46 @@ static async buildReceiptHTML(order, shop = null) {
     .right { text-align: right; }
     .small { font-size: 12px; color: #555; }
     .note { font-style: italic; color: #666; font-size: 12px; margin-top: 2px; }
-    .noprint { margin-top: 10px; text-align: center; }
-    .noprint button {
-      background: #009DA5;
-      color: #fff;
-      border: none;
-      padding: 6px 12px;
-      border-radius: 4px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    @media print {
-      .noprint { display: none; }
-    }
-    .discount {
-      text-decoration: line-through;
-      color: #888;
-      margin-right: 4px;
-    }
-    .item {
-      margin-bottom: 6px;
-    }
-    .item-header {
-      font-size: 14px;
-      color: #000;
-    }
-    .item-line {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      margin-top: 2px;
-    }
-    .item-line div {
-      text-align: center;
-      flex: 1;
-    }
+    .discount { text-decoration: line-through; color: #888; margin-right: 4px; }
+    .item { margin-bottom: 6px; }
+    .item-header { font-size: 14px; color: #000; }
+    .item-line { display: flex; justify-content: space-between; font-size: 13px; margin-top: 2px; }
+    .item-line div { flex: 1; text-align: center; }
     .item-line div:first-child { text-align: left; }
     .item-line div:last-child { text-align: right; }
-    .table-header {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      font-weight: bold;
-      margin-bottom: 4px;
-    }
-    .table-header div {
-      flex: 1;
-      text-align: center;
-    }
+    .table-header { display: flex; justify-content: space-between; font-size: 13px; font-weight: bold; margin-bottom: 4px; }
+    .table-header div { flex: 1; text-align: center; }
     .table-header div:first-child { text-align: left; }
     .table-header div:last-child { text-align: right; }
-    .qr-box {
-  text-align: center;
-  margin-top: 10px;
-}
-
-.qr-box img {
-  width: 200px;          
-  height: auto;           
-  display: block;
-  margin: 0 auto;
-}
-
+    .qr-box { text-align: center; margin-top: 10px; }
+    .qr-box img { width: 200px; height: auto; display: block; margin: 0 auto; }
+    .noprint { margin-top: 10px; text-align: center; }
+    .noprint button {
+      background: #009DA5; color: #fff; border: none;
+      padding: 6px 12px; border-radius: 4px;
+      font-weight: bold; cursor: pointer;
+    }
+    @media print { .noprint { display: none; } }
   </style>
 </head>
 <body>
   <div class="center">
     <h2>${shop.name.toUpperCase()}</h2>
     <div>${shop.address}</div>
-    <div>${shop.phone ? `Hotline: ${shop.phone}` : ""}</div>
+    ${shop.phone ? `<div>Hotline: ${shop.phone}</div>` : ""}
   </div>
 
   <div class="line"></div>
   <div>Mã hóa đơn: <b>#${order.id || "000"}</b></div>
   <div>Thời gian: ${dateStr} ${timeStr}</div>
-  ${order.customerName ? `<div>Khách hàng: ${order.customerName}</div>` : ""}
-  ${order.customerPhone ? `<div>Điện thoại: ${order.customerPhone}</div>` : ""}
+  ${
+    order.customerName
+      ? `<div><b>Khách hàng:</b> ${order.customerName}</div>
+         ${order.customerPhone ? `<div>Điện thoại: ${order.customerPhone}</div>` : ""}
+         ${order.customerAddress ? `<div>Địa chỉ: ${order.customerAddress}</div>` : ""}`
+      : `<div><b>Khách hàng:</b> Khách lẻ</div>`
+  }
+
   ${order.note ? `<div class="note">Ghi chú đơn: ${order.note}</div>` : ""}
   <div class="line"></div>
 
@@ -266,31 +334,48 @@ static async buildReceiptHTML(order, shop = null) {
 
   <!-- 🔹 Danh sách sản phẩm -->
   <div>
-    ${(order.items || []).map(it => `
+    ${(order.items || [])
+      .map(
+        (it) => `
       <div class="item">
         <div class="item-header">${it.name}</div>
         <div class="item-line">
-          <div>
-            ${
-              it.discountPrice && it.discountPrice < it.price
-                ? `<span class="discount">${fmt.format(it.price)}đ</span> ${fmt.format(it.discountPrice)}đ`
-                : `${fmt.format(it.price)}đ`
-            }
-          </div>
+          <div>${
+            it.discountPrice && it.discountPrice < it.price
+              ? `<span class="discount">${fmt.format(it.price)}đ</span> ${fmt.format(it.discountPrice)}đ`
+              : `${fmt.format(it.price)}đ`
+          }</div>
           <div>x${it.qty}</div>
           <div>${it.unit || "-"}</div>
           <div>${fmt.format((it.discountPrice || it.price) * it.qty)}đ</div>
         </div>
         ${it.note ? `<div class="note">• ${it.note}</div>` : ""}
       </div>
-    `).join("")}
+    `
+      )
+      .join("")}
   </div>
 
   <div class="line"></div>
   <table style="width:100%;font-size:13px;">
-    <tr><td>Tổng cộng:</td><td class="right">${fmt.format(order.total + (order.discount || 0))} đ</td></tr>
-    ${order.discount ? `<tr><td>Giảm giá:</td><td class="right">-${fmt.format(order.discount)} đ</td></tr>` : ""}
-    <tr><td class="bold">Thành tiền:</td><td class="right bold">${fmt.format(order.total)} đ</td></tr>
+    <tr><td>Tổng cộng:</td><td class="right">${fmt.format(subTotal)} đ</td></tr>
+    ${
+      order.voucherCode && voucherValue > 0
+        ? `<tr><td>Mã giảm giá:</td><td class="right">${order.voucherCode}</td></tr>
+           <tr><td>Giảm voucher:</td><td class="right">-${fmt.format(voucherValue)} đ</td></tr>`
+        : ""
+    }
+    ${
+      manualDiscountPercent > 0
+        ? `<tr><td>Chiết khấu:</td><td class="right">${manualDiscountPercent}% (-${fmt.format(manualDiscountValue)} đ)</td></tr>`
+        : ""
+    }
+    ${
+      totalDiscount > 0
+        ? `<tr><td>Tổng giảm:</td><td class="right">-${fmt.format(totalDiscount)} đ</td></tr>`
+        : ""
+    }
+    <tr><td class="bold">Thành tiền:</td><td class="right bold">${fmt.format(grandTotal)} đ</td></tr>
   </table>
 
   <div class="line"></div>
@@ -301,11 +386,11 @@ static async buildReceiptHTML(order, shop = null) {
         ? `<div>Tiền khách đưa: ${fmt.format(received)} đ</div>
            <div>Tiền thừa: ${fmt.format(change)} đ</div>`
         : order.method === "qr" && qrUrl
-        ? `<div class="qr-box">
+          ? `<div class="qr-box">
              <p class="small">Vui lòng quét mã QR để thanh toán</p>
              <img src="${qrUrl}" alt="QR Code" />
            </div>`
-        : ""
+          : ""
     }
   </div>
 
@@ -321,6 +406,5 @@ static async buildReceiptHTML(order, shop = null) {
   </div>
 </body>
 </html>`;
-}
-
+  }
 }
