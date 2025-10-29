@@ -17,16 +17,17 @@ export default function Sidebar() {
   const navigate = useNavigate();
 
   const navItems = [
-  { icon: Home, label: "Trang chủ", path: "/orders" },
-  { icon: BarChart2, label: "Dashboard", path: "/dashboard" },
-  { icon: Folder, label: "Danh mục", path: "/categories" },
-  { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
-  { icon: Users, label: "Khách hàng", path: "/customers" },
-  { icon: Gift, label: "Voucher", path: "/vouchers" },
-  { icon: Medal, label: "Rank", path: "/ranks" },
-  { icon: Tag, label: "Promotion", path: "/promotions" },
-  { icon: UserCog, label: "User Features", path: "/user-features" },
-];
+    { icon: Home, label: "Trang chủ", path: "/orders" },
+    { icon: BarChart2, label: "Dashboard", path: "/dashboard" },
+    { icon: Folder, label: "Danh mục", path: "/categories" },
+    { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
+    { icon: ShoppingBag, label: "Hóa đơn", path: "/invoices" },
+    { icon: Users, label: "Khách hàng", path: "/customers" },
+    { icon: Gift, label: "Voucher", path: "/vouchers" },
+    { icon: Medal, label: "Rank", path: "/ranks" },
+    { icon: Tag, label: "Promotion", path: "/promotions" },
+    { icon: UserCog, label: "User Features", path: "/user-features" },
+  ];
 
   return (
     <div className="h-screen w-[90px] bg-[#161B22] flex flex-col items-center py-8 space-y-6 rounded-r-3xl relative overflow-visible">
@@ -73,7 +74,6 @@ export default function Sidebar() {
               `}
             >
               <Icon className="w-6 h-6" />
-
             </button>
           </div>
         );

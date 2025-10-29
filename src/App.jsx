@@ -1,23 +1,27 @@
-
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
-import LoginPage from './pages/LoginPage';
-import OrdersPage from './pages/OrdersPage';
-import OpenShiftPage from './pages/OpenShiftPage';
-import PaymentPage from './pages/PaymentPage';
-import ProductPage from './pages/ProductPage';
-import CategoryPage from './pages/CategoryPage';
-import CustomerPage from './pages/CustomerPage';
-import VoucherPage from './pages/VoucherPage';
-import RankPage from './pages/RankPage';
-import PromotionPage from './pages/PromotionPage';
-import UserFeaturePage from './pages/UserFeaturePage';
-import DashboardPage from './pages/DashboardPage';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import LoginPage from "./pages/LoginPage";
+import OrdersPage from "./pages/OrdersPage";
+import OpenShiftPage from "./pages/OpenShiftPage";
+import PaymentPage from "./pages/PaymentPage";
+import ProductPage from "./pages/ProductPage";
+import CategoryPage from "./pages/CategoryPage";
+import CustomerPage from "./pages/CustomerPage";
+import VoucherPage from "./pages/VoucherPage";
+import RankPage from "./pages/RankPage";
+import PromotionPage from "./pages/PromotionPage";
+import UserFeaturePage from "./pages/UserFeaturePage";
+import DashboardPage from "./pages/DashboardPage";
+import InvoicesPage from "./pages/InvoicesPage";
 import { Toaster } from "@/components/ui/toaster";
 export default function App() {
   return (
     <Router>
       <div>
-        
         <main>
           <Routes>
             <Route path="/" element={<Navigate to="/login" />} />
@@ -33,10 +37,11 @@ export default function App() {
             <Route path="/promotions" element={<PromotionPage />} />
             <Route path="/user-features" element={<UserFeaturePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/invoices" element={<InvoicesPage />} />
           </Routes>
           <Toaster />
         </main>
       </div>
     </Router>
-  )
+  );
 }

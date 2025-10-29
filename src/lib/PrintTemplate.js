@@ -81,7 +81,11 @@ export default class PrintTemplate {
 
     if (!shop) shop = await this.getShopInfo();
 
-    const fmt = new Intl.NumberFormat("vi-VN");
+    const fmt = new Intl.NumberFormat("vi-VN", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+
     const now = new Date();
     const dateStr = now.toLocaleDateString("vi-VN");
     const timeStr = now.toLocaleTimeString("vi-VN", {
@@ -222,7 +226,11 @@ export default class PrintTemplate {
     }
 
     if (!shop) shop = await this.getShopInfo();
-    const fmt = new Intl.NumberFormat("vi-VN");
+    const fmt = new Intl.NumberFormat("vi-VN", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+
     const now = new Date();
     const dateStr = now.toLocaleDateString("vi-VN");
     const timeStr = now.toLocaleTimeString("vi-VN", {
