@@ -621,20 +621,17 @@ class OrdersPageClass extends React.Component {
         const promoPrice = Number(p.promotionPrice ?? 0);
         const promoType = Number(p.promotionType ?? 0);
 
-        const hasPromo =
-          promoPrice > 0 && !isNaN(promoPrice) && promoPrice < basePrice;
-
-        let discountPercent = null;
-        if ((promoType === 2 || hasPromo) && basePrice > 0) {
-          discountPercent = Math.round(
-            ((basePrice - promoPrice) / basePrice) * 100
-          );
-        }
+        const hasPromo = promoPrice > 0 && promoPrice < basePrice;
+        const discountPercent =
+          hasPromo && basePrice > 0
+            ? Math.round(((basePrice - promoPrice) / basePrice) * 100)
+            : 0;
 
         return {
           id: pid,
           name: p.productName,
-          price: basePrice,
+          price: hasPromo ? promoPrice : basePrice,
+          basePrice,
           promoPrice: hasPromo ? promoPrice : null,
           hasPromo,
           promoType,
@@ -859,6 +856,11 @@ class OrdersPageClass extends React.Component {
         };
       }
     }
+    const basePrice = Number(p.basePrice || p.price || 0);
+    const finalPrice = p.hasPromo
+      ? Number(p.promoPrice || basePrice)
+      : basePrice;
+    const promoValue = p.hasPromo ? basePrice - finalPrice : 0;
 
     this.setOrdersForActive((prev) => {
       const i = prev.findIndex(
@@ -867,21 +869,18 @@ class OrdersPageClass extends React.Component {
       if (i >= 0) {
         const copy = [...prev];
         copy[i] = { ...copy[i], qty: copy[i].qty + 1 };
-        logCart("inc qty existing line", { index: i, after: copy[i] });
         return copy;
       }
-      const next = [
+      return [
         ...prev,
         {
           ...p,
           qty: 1,
-          note: "",
-          price: p.hasPromo ? p.promoPrice : p.price,
+          basePrice,
+          price: finalPrice,
+          promotionValue: promoValue,
         },
       ];
-
-      logCart("push item", next[next.length - 1]);
-      return next;
     });
   };
 
@@ -950,6 +949,7 @@ class OrdersPageClass extends React.Component {
       return copy;
     });
   };
+
   /* ========== CUSTOMER LOGIC ========== */
   searchCustomerByPhone = async (phone) => {
     const { shopId } = this.state;
@@ -988,13 +988,22 @@ class OrdersPageClass extends React.Component {
       alert("Không có sản phẩm để thanh toán!");
       return;
     }
-    const total = current.orders.reduce(
-      (sum, it) => sum + Number(it.qty || 0) * Number(it.price || 0),
+    const enhancedOrders = current.orders.map((o) => ({
+      ...o,
+      basePrice: Number(o.basePrice || o.price || 0),
+      price: Number(o.price || 0),
+      promotionValue: Number(o.promotionValue || 0),
+    }));
+
+    const orderTotal = enhancedOrders.reduce(
+      (sum, it) => sum + it.qty * it.price,
       0
     );
+
     const orderCache = {
       ...current,
-      total,
+      orders: enhancedOrders,
+      total: orderTotal,
       createdAt: new Date().toISOString(),
       customer: this.state.foundCustomer || null,
     };
@@ -1002,8 +1011,8 @@ class OrdersPageClass extends React.Component {
 
     this.props.navigate("/payment?method=cash", {
       state: {
-        total,
-        orders: current.orders,
+        total: orderTotal,
+        orders: enhancedOrders,
         customerId: this.state.foundCustomer?.customerId || null,
         customerName: this.state.foundCustomer?.fullName || "Khách lẻ",
         note: current.note || "",
@@ -1789,7 +1798,18 @@ class OrdersPageClass extends React.Component {
                           </div>
 
                           <div className="text-center">
-                            {fmt.format(o.price)}
+                            {o.promotionValue > 0 ? (
+                              <>
+                                <div className="text-xs line-through text-gray-400">
+                                  {fmt.format(o.basePrice)}đ
+                                </div>
+                                <div className="font-semibold text-red-600">
+                                  {fmt.format(o.price)}đ
+                                </div>
+                              </>
+                            ) : (
+                              <div>{fmt.format(o.price)}đ</div>
+                            )}
                           </div>
 
                           <div className="flex justify-center">

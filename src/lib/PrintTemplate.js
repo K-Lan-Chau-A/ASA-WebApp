@@ -126,7 +126,10 @@ export default class PrintTemplate {
       out += `${name}\n`;
 
       // 💰 Dòng 2: Giá - SL - Tổng
-      const price = fmt.format(it.price).padStart(8, " ");
+      const base = Number(item.basePrice || item.unitPrice || item.price || 0);
+      const promo = Number(item.promotionValue || item.discountValue || 0);
+      const price = Math.max(0, base - promo);
+
       const qty = String(it.qty).padStart(4, " ");
       const total = fmt.format(it.price * it.qty).padStart(10, " ");
       out += `${price}       x${qty}   =${total}\n`;
@@ -249,7 +252,7 @@ export default class PrintTemplate {
         ? Math.max(0, (received || order.total) - order.total)
         : null;
 
-    // ==== GIẢM GIÁ ====
+    // ==== TÍNH TOÁN GIẢM GIÁ ====
     const subTotal = (order.items || []).reduce(
       (s, i) => s + i.price * i.qty,
       0
@@ -268,6 +271,7 @@ export default class PrintTemplate {
       shop.qrcode ||
       `https://img.vietqr.io/image/${shop.bankCode}-${shop.bankAccount}-compact2.png?amount=${order.total}&addInfo=Order%20${order.id}&accountName=${encodeURIComponent(shop.name)}&size=600`;
 
+    // ======== HTML HÓA ĐƠN ========
     return `
 <html>
 <head>
@@ -321,7 +325,23 @@ export default class PrintTemplate {
       : `<div><b>Khách hàng:</b> Khách lẻ</div>`
   }
 
-  ${order.note ? `<div class="note">Ghi chú đơn: ${order.note}</div>` : ""}
+  ${
+    order.note
+      ? (() => {
+          const notes = order.note
+            .split("|")
+            .map((n) => n.trim())
+            .filter((v, i, a) => v && a.indexOf(v) === i);
+          return `
+          <div class="line"></div>
+          <div class="note">
+            📝 <b>Ghi chú đơn hàng:</b><br>
+            ${notes.map((n) => `• ${n}`).join("<br>")}
+          </div>`;
+        })()
+      : ""
+  }
+
   <div class="line"></div>
 
   <!-- 🔹 Header bảng sản phẩm -->
@@ -333,28 +353,44 @@ export default class PrintTemplate {
   </div>
 
   <!-- 🔹 Danh sách sản phẩm -->
-  <div>
+    <div>
     ${(order.items || [])
-      .map(
-        (it) => `
-      <div class="item">
-        <div class="item-header">${it.name}</div>
-        <div class="item-line">
-          <div>${
-            it.discountPrice && it.discountPrice < it.price
-              ? `<span class="discount">${fmt.format(it.price)}đ</span> ${fmt.format(it.discountPrice)}đ`
-              : `${fmt.format(it.price)}đ`
-          }</div>
-          <div>x${it.qty}</div>
-          <div>${it.unit || "-"}</div>
-          <div>${fmt.format((it.discountPrice || it.price) * it.qty)}đ</div>
-        </div>
-        ${it.note ? `<div class="note">• ${it.note}</div>` : ""}
-      </div>
-    `
-      )
+      .map((it) => {
+        const base = Number(it.basePrice || it.unitPrice || it.price || 0);
+        const promo = Number(it.promotionValue || it.discountValue || 0);
+        const final = Math.max(0, base - promo);
+
+        const rawNote = String(it.note || "").trim();
+        const globalNote = String(order.note || "").trim();
+        const hasVoucher = !!order.voucherCode;
+        const isVoucherNt =
+          hasVoucher &&
+          rawNote
+            .toLowerCase()
+            .includes(String(order.voucherCode).toLowerCase());
+        const isGlobalDup = !!rawNote && !!globalNote && rawNote === globalNote;
+
+        const itemNote = !rawNote || isVoucherNt || isGlobalDup ? "" : rawNote;
+
+        return `
+        <div class="item">
+          <div class="item-header">${it.name}</div>
+          <div class="item-line">
+            <div>${
+              promo > 0
+                ? `<span class="discount">${fmt.format(base)}đ</span> ${fmt.format(final)}đ`
+                : `${fmt.format(final)}đ`
+            }</div>
+            <div>x${it.qty}</div>
+            <div>${it.unit || "-"}</div>
+            <div>${fmt.format(final * it.qty)}đ</div>
+          </div>
+          ${itemNote ? `<div class="note">• ${itemNote}</div>` : ""}
+        </div>`;
+      })
       .join("")}
   </div>
+
 
   <div class="line"></div>
   <table style="width:100%;font-size:13px;">

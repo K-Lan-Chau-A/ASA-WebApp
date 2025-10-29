@@ -84,8 +84,14 @@ class PaymentPageClass extends React.Component {
     const cached = localStorage.getItem("lastOrderCache");
     if (cached) {
       const parsed = JSON.parse(cached);
+      const orders = (parsed.orders || []).map((o) => ({
+        ...o,
+        basePrice: Number(o.basePrice || o.price || 0),
+        price: Number(o.price || 0),
+        promotionValue: Number(o.promotionValue || 0),
+      }));
       this.setState({
-        orders: parsed.orders || [],
+        orders,
         total: parsed.total || 0,
         customerId: parsed.customer?.customerId || null,
         customerName: parsed.customer?.fullName || "Khách lẻ",
@@ -513,23 +519,38 @@ class PaymentPageClass extends React.Component {
 
     const token = localStorage.getItem("accessToken") || "";
     const url = `${API_URL}/api/orders?OrderId=${orderId}&ShiftId=${shiftId}&ShopId=${shopId}&page=1&pageSize=1&_=${Date.now()}`;
+
     try {
       const t0 = performance.now();
       const res = await fetch(url, {
         headers: {
-          accept: "*/*",
+          accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         mode: "cors",
         cache: "no-store",
       });
+
       const dt = Math.round(performance.now() - t0);
-      log(`GET head(${orderId}) → ${res.status} (${dt}ms)`, url);
+      log(`GET fetchOrderHead(${orderId}) → ${res.status} (${dt}ms)`, url);
+
       const data = await this.safeParse(res);
+
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
-      return Array.isArray(data?.items) ? data.items[0] : null;
+
+      const head =
+        Array.isArray(data?.items) && data.items.length
+          ? data.items[0]
+          : data.item || data || null;
+
+      if (!head || !head.orderId) {
+        warn(`[Payment] Không tìm thấy order #${orderId}`);
+        return null;
+      }
+
+      return head;
     } catch (e) {
-      warn("fetchOrderHead failed:", e?.message || e);
+      warn("[Payment] fetchOrderHead failed:", e?.message || e);
       return null;
     }
   }
@@ -538,7 +559,6 @@ class PaymentPageClass extends React.Component {
     const head = (await this.fetchOrderHead(orderId)) || {};
     const last = this.getLastOrderCache() || {};
 
-    // orderDetails: ưu tiên state → last → fetch
     let details = (this.state.orders || []).map((it) => ({
       quantity: Number(it.qty || 0),
       productUnitId: Number(it.productUnitId || 0),
@@ -855,6 +875,14 @@ class PaymentPageClass extends React.Component {
         this.showToast("⚠️ Không thể tạo đơn hàng mới", 2000);
         return;
       }
+      if (newId > 0) {
+        await this.fetchOrderDetailsFor(newId);
+        this.setState({ orderId: newId, displayOrderId: newId });
+        await this.fetchOrderDetailsFor(newId);
+        await this.fetchOrderHead(newId);
+        console.log(`✅ Đã tạo đơn hàng #${newId}`);
+        return newId;
+      }
     }
 
     const pm = METHOD_MAP[tab] ?? null;
@@ -870,6 +898,8 @@ class PaymentPageClass extends React.Component {
       quantity: Number(it.qty || 0),
       productUnitId: Number(it.productUnitId || 0),
       productId: Number(it.id || 0),
+      price: Number(it.price || it.basePrice || 0),
+      discountValue: Number(it.promotionValue || 0),
     }));
 
     const paymentMethod =
@@ -877,7 +907,6 @@ class PaymentPageClass extends React.Component {
 
     const subtotal = this.subtotal();
 
-    // ❌ Không cộng voucher nữa — backend đã tự xử lý voucherDiscount
     const manualPercent = Number(this.state.manualDiscountPercent || 0);
 
     const payload = {
@@ -887,7 +916,7 @@ class PaymentPageClass extends React.Component {
       shiftId: shiftId ?? null,
       shopId: shopId ?? null,
       voucherId: this.state.voucherInfo?.voucherId || null,
-      discount: manualPercent, // ✅ chỉ gửi phần trăm nhập tay
+      discount: manualPercent,
       note: this.state.note?.trim() || "",
       orderDetails,
     };
@@ -905,32 +934,59 @@ class PaymentPageClass extends React.Component {
       if (!orderId) orderId = await this.createOrderIfNeeded();
 
       if (!orderId) {
-        this.setState({ loading: false, error: "Không thể tạo đơn hàng mới." });
+        this.setState({
+          loading: false,
+          error: "Không thể tạo đơn hàng mới.",
+        });
         return;
       }
 
-      if (this.state.activeTab === "cash") {
-        const url = `${API_URL}/api/orders/${orderId}`;
-        const payload = { status: 1, note: this.state.note || "" };
-        const res = await fetch(url, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const url = `${API_URL}/api/orders/${orderId}`;
+      const payload = {
+        status: this.state.activeTab === "cash" ? 1 : 0,
+        note: this.state.note || "",
+      };
 
-        this._isPaid = true;
-        await this.handlePrintReceipt();
-        this.props.navigate("/orders");
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const freshOrder = await this.fetchOrderHead(orderId);
+      const autoNote = freshOrder?.note || "";
+      const finalNote = [this.state.note, autoNote].filter(Boolean).join(" | ");
+
+      this.setState({ note: finalNote });
+
+      if (this.state.activeTab === "cash") {
+        const freshOrder = await this.fetchOrderHead(orderId);
+        const autoNote = freshOrder?.note || "";
+        const finalNote = [this.state.note, autoNote]
+          .filter(Boolean)
+          .join(" | ");
+
+        this.setState({ note: finalNote }, async () => {
+          this._isPaid = true;
+          await this.handlePrintReceipt();
+          this.props.navigate("/orders");
+        });
+
+        this.showToast("✅ Thanh toán thành công!");
+        setTimeout(() => this.props.navigate("/orders"), 800);
       } else {
         this.showToast("✅ Đơn hàng đã lưu, chờ thanh toán");
       }
     } catch (e) {
       console.error("[Payment] ❌ submitOrder:", e);
-      this.setState({ error: e.message || "Lỗi cập nhật đơn hàng" });
+      this.setState({
+        error: e.message || "Lỗi cập nhật đơn hàng",
+      });
     } finally {
       this.setState({ loading: false });
     }
@@ -957,9 +1013,23 @@ class PaymentPageClass extends React.Component {
         name: o.name,
         qty: Number(o.qty || 0),
         unit: o.unit || "",
-        price: Number(o.basePrice ?? o.price ?? 0),
-        discountPrice: Number(o.price ?? 0),
-        note: o.note || "",
+        basePrice: Number(o.basePrice ?? o.price ?? 0),
+        promotionValue: Number(o.promotionValue || o.discountValue || 0),
+        price: Math.max(
+          0,
+          (o.basePrice ?? o.price ?? 0) -
+            (o.promotionValue || o.discountValue || 0)
+        ),
+        note: [
+          this.state.note,
+          this.state.generatedNote,
+          (this.state.orders || [])
+            .map((o) => o.note)
+            .filter(Boolean)
+            .join("; "),
+        ]
+          .filter(Boolean)
+          .join(" | "),
       }));
 
       const order = {
@@ -1102,7 +1172,7 @@ class PaymentPageClass extends React.Component {
                 Order # <span className="font-semibold">{displayOrderId}</span>
               </>
             ) : (
-              "Đang lấy OrderId..."
+              "Order..."
             )}
           </div>
         </div>
@@ -1201,22 +1271,17 @@ class PaymentPageClass extends React.Component {
                   <div className="font-semibold text-gray-800">
                     {i + 1}. {o.name}
                   </div>
-                  {o.discountValue > 0 ? (
-                    <div className="space-y-0.5">
-                      <div className="text-xs text-gray-400 line-through">
+                  {o.promotionValue > 0 ? (
+                    <>
+                      <div className="text-xs line-through text-gray-400">
                         {fmt.format(o.basePrice)}đ
                       </div>
-                      <div className="text-sm font-semibold text-red-600">
-                        {fmt.format(o.price)}đ {o.unit && `• ${o.unit}`}
+                      <div className="text-red-600 font-bold">
+                        {fmt.format(o.price)}đ
                       </div>
-                      <div className="text-xs text-emerald-600 font-medium">
-                        🔻 Tiết kiệm {fmt.format(o.discountValue)}đ mỗi sản phẩm
-                      </div>
-                    </div>
+                    </>
                   ) : (
-                    <div className="text-xs text-gray-500">
-                      {fmt.format(o.price)}đ {o.unit && `• ${o.unit}`}
-                    </div>
+                    <div className="font-bold">{fmt.format(o.price)}đ</div>
                   )}
                 </div>
 
