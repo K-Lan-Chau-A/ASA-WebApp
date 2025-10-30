@@ -22,6 +22,7 @@ import {
   Trash2,
   X,
   CheckCircle,
+  MessageCircle,
 } from "lucide-react";
 import PrintService from "@/services/PrintService";
 
@@ -48,7 +49,7 @@ const fmt = new Intl.NumberFormat("vi-VN");
 const IconBtn = ({ children, title, ...props }) => (
   <button
     title={title}
-    className="w-9 h-9 grid place-items-center rounded-full text-white/90 hover:text-white hover:bg-white/10 transition"
+    className="w-9 h-9 grid place-items-center rounded-full text-white/90 hover:text-white hover:bg-[#00A8B0]/80 transition"
     {...props}
   >
     {children}
@@ -113,8 +114,8 @@ class OrdersPageClass extends React.Component {
     unreadCount: 0,
   };
   showPopup = (title, message, type = "info") => {
-    const toastFn = this.props.toast; // đổi tên để tránh trùng
-    if (!toastFn) return alert(`${title}\n${message}`); // fallback
+    const toastFn = this.props.toast;
+    if (!toastFn) return alert(`${title}\n${message}`);
 
     const colorMap = {
       info: "#00A8B0",
@@ -126,7 +127,7 @@ class OrdersPageClass extends React.Component {
     toastFn({
       title: title || "Thông báo",
       description: message,
-      duration: 3000, // ⏱️ tự động ẩn sau 3s
+      duration: 3000,
       style: {
         borderLeft: `4px solid ${colorMap[type] || colorMap.info}`,
         padding: "12px 16px",
@@ -185,23 +186,20 @@ class OrdersPageClass extends React.Component {
       return;
     }
 
-    // 📦 Nếu có state đã cache, khôi phục lại (để không load lại API)
     const cachedState = localStorage.getItem("cachedOrdersPage");
     if (cachedState) {
       try {
         const parsed = JSON.parse(cachedState);
         this.setState({ ...parsed, shopId }, () => {
           logApp("✅ Restored cached OrdersPage state");
-          // Dù có cache, vẫn refresh nền để cập nhật dữ liệu mới nhất
           this.refreshInBackground();
         });
-        return; // dừng ở đây, không gọi lại toàn bộ API
+        return;
       } catch (e) {
         console.warn("⚠️ Lỗi khi parse cache:", e);
       }
     }
 
-    // 🆕 Nếu chưa có cache → gọi API lần đầu
     this.setState({ shopId }, async () => {
       await Promise.all([
         this.fetchUnitsAllByShop(),
@@ -216,7 +214,6 @@ class OrdersPageClass extends React.Component {
     this.mounted = false;
     document.removeEventListener("click", this.handleOutsideClick);
 
-    // 💾 Cache lại toàn bộ state (trừ loading)
     const cacheData = {
       invoices: this.state.invoices,
       activeIdx: this.state.activeIdx,
@@ -243,6 +240,7 @@ class OrdersPageClass extends React.Component {
         this.fetchUnitsAllByShop(),
         this.fetchNotifications(),
       ]);
+      await this.fetchTopProducts();
 
       if (products.status === "fulfilled") {
         localStorage.setItem(
@@ -743,6 +741,34 @@ class OrdersPageClass extends React.Component {
       console.error("[PRODUCTS] Fetch failed:", e);
     }
   };
+  fetchTopProducts = async () => {
+    const { shopId } = this.state;
+    if (!shopId) return;
+    const token = localStorage.getItem("accessToken");
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/reports/statistics-overview?shopId=${shopId}`,
+        {
+          headers: {
+            accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+      const topIds = (data?.topProducts || [])
+        .slice(0, 10)
+        .map((p) => Number(p.productId));
+
+      this.setState({ topProductIds: topIds });
+      console.log("🌟 Top 10 sản phẩm bán chạy:", topIds);
+    } catch (e) {
+      console.warn("⚠️ fetchTopProducts error:", e);
+    }
+  };
 
   buildCategoryTabs = (products) => {
     const map = new Map();
@@ -1164,6 +1190,30 @@ class OrdersPageClass extends React.Component {
       this.showPopup("Lỗi in", "Không thể in phiếu tạm tính.", "error");
     }
   };
+  /* ===================== SHIFT CHECK ===================== */
+  checkShiftStatus = async () => {
+    const token = localStorage.getItem("accessToken");
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = Number(profile?.shopId || 0);
+    if (!shopId || !token) return this.setState({ shiftStatus: 0 });
+
+    try {
+      const res = await fetch(`${API_URL}/api/shifts?ShopId=${shopId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data)
+          ? json.data
+          : [];
+      const active = items.find((s) => s.status === 1);
+      this.setState({ shiftStatus: active ? 1 : 2 });
+    } catch (e) {
+      console.warn("⚠️ checkShiftStatus error:", e.message);
+      this.setState({ shiftStatus: 0 });
+    }
+  };
 
   /* ===================== AUTH / MISC ===================== */
   logout = () => {
@@ -1366,14 +1416,13 @@ class OrdersPageClass extends React.Component {
                   onValueChange={(v) => this.setActiveTab(v)}
                   className="flex flex-col h-full"
                 >
-                  <div className="sticky top-0 z-10 bg-white -mt-[3px]">
+                  <div className="sticky top-0 z-10 bg-white -mt-[3px] rounded-t-xl overflow-hidden shadow-sm">
                     <TabsList
                       className="
       flex items-center gap-6 px-6
       bg-white
       border-b border-gray-200
       overflow-x-auto
-      rounded-t-xl
       text-sm font-medium text-gray-600
     "
                     >
@@ -1395,7 +1444,16 @@ class OrdersPageClass extends React.Component {
                     </TabsList>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto">
+                  <div
+                    className="
+                    flex-1 overflow-y-auto 
+                    bg-white 
+                    rounded-b-xl 
+                    shadow-sm 
+                    border-t-0 border border-gray-200
+                    ghost-scrollbar
+                  "
+                  >
                     {categories.map((c) => {
                       const entry = productsByTab[c.value] || {
                         items: [],
@@ -1403,7 +1461,6 @@ class OrdersPageClass extends React.Component {
                         error: "",
                       };
 
-                      // ✅ Dữ liệu hiển thị cho từng tab
                       const list =
                         c.id === "all"
                           ? entry.items?.length
@@ -1416,13 +1473,14 @@ class OrdersPageClass extends React.Component {
                           key={c.id}
                           value={c.value}
                           className="
-                              p-4
-                              grid grid-cols-4 gap-4
-                              place-items-start
-                              content-start
-                              auto-rows-auto
-                              data-[state=inactive]:hidden
-                            "
+                          p-4 
+                          grid grid-cols-4 gap-4
+                          [@media(max-width:1024px)]:grid-cols-3
+                          [@media(max-width:768px)]:grid-cols-2
+                          [@media(max-width:500px)]:grid-cols-1
+                          items-stretch
+                          data-[state=inactive]:hidden
+                        "
                         >
                           {entry.loading ? (
                             <div className="col-span-full text-sm text-gray-500">
@@ -1447,6 +1505,17 @@ class OrdersPageClass extends React.Component {
                                 key={p.id}
                                 className="relative rounded-xl hover:shadow-md transition"
                               >
+                                {/* ⭐ Góc trái: nếu là top product */}
+                                {this.state.topProductIds?.includes(
+                                  Number(p.id)
+                                ) && (
+                                  <div className="absolute top-2 left-2 bg-yellow-400 text-white text-[11px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-1">
+                                    <Star size={12} fill="currentColor" /> Bán
+                                    chạy
+                                  </div>
+                                )}
+
+                                {/* Góc phải: giảm giá */}
                                 {p.hasPromo &&
                                   p.discountPercent > 0 &&
                                   p.promoType !== 1 && (
@@ -1454,43 +1523,43 @@ class OrdersPageClass extends React.Component {
                                       -{p.discountPercent}%
                                     </div>
                                   )}
-
-                                <CardContent className="p-2 flex flex-col items-center text-center flex-1 justify-between">
+                                <CardContent className="p-3 flex flex-col items-center text-center h-full justify-between">
+                                  {/* Hình ảnh sản phẩm */}
                                   <img
                                     src={
                                       p.img ||
                                       "https://placehold.co/150x150?text=No+Image"
                                     }
                                     alt={p.name}
-                                    className="w-[90%] h-[100px] object-contain rounded-lg mb-2"
+                                    className="w-full h-[120px] object-contain rounded-lg mb-2"
                                     onError={(e) => {
                                       e.currentTarget.src =
                                         "https://placehold.co/150x150?text=No+Image";
                                     }}
                                   />
 
+                                  {/* Tên và giá */}
                                   <div className="flex flex-col items-center justify-between flex-1 w-full">
                                     <h3 className="text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
                                       {p.name}
                                     </h3>
-                                    <div className="text-orange-500 font-bold">
+                                    <div className="mt-1 text-orange-500 font-bold text-base">
                                       {fmt.format(p.price)}đ
                                     </div>
-                                    <div className="text-xs text-gray-500">
+                                    <div className="text-xs text-gray-500 mb-2">
                                       Đơn vị: {p.unit || "—"}
                                     </div>
-                                    <div className="flex items-center justify-between w-full mt-1">
-                                      <div className="flex items-center text-yellow-500 text-xs">
-                                        <Star size={14} fill="currentColor" />{" "}
-                                        4.5
-                                      </div>
-                                      <Button
-                                        size="sm"
-                                        onClick={() => this.addToOrder(p)}
-                                      >
-                                        Add
-                                      </Button>
-                                    </div>
+                                  </div>
+
+                                  {/* Đánh giá & nút thêm */}
+                                  <div className="flex justify-center w-full mt-2">
+                                    <Button
+                                      size="sm"
+                                      className="rounded-full bg-[#00A8B0] hover:bg-[#00939a] text-white px-4 py-1 text-xs"
+                                      onClick={() => this.addToOrder(p)}
+                                    >
+                                      + Thêm
+                                    </Button>
                                   </div>
                                 </CardContent>
                               </Card>
@@ -1550,12 +1619,10 @@ class OrdersPageClass extends React.Component {
               </div>
 
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <IconBtn title="Âm lượng">
-                  <Volume2 className="w-5 h-5" />
+                <IconBtn title="Tin nhắn" onClick={() => this.toggleChat?.()}>
+                  <MessageCircle className="w-5 h-5" />
                 </IconBtn>
-                <IconBtn title="Cảnh báo">
-                  <AlertCircle className="w-5 h-5" />
-                </IconBtn>
+
                 <IconBtn title="In hoá đơn" onClick={this.printTempBill}>
                   <Printer className="w-5 h-5" />
                 </IconBtn>

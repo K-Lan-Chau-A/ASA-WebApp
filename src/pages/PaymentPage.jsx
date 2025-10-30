@@ -1141,17 +1141,29 @@ class PaymentPageClass extends React.Component {
 
   RenderTabs() {
     const { activeTab } = this.state;
+    const inactiveTabs = ["nfc", "atm"];
+
     return (
       <div className="grid grid-cols-4 gap-2">
-        {PAY_TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => this.setActiveTab(t.id)}
-            className={`h-10 rounded-lg border text-sm font-medium ${activeTab === t.id ? "bg-[#00A8B0] text-white border-[#00A8B0]" : "bg-white"}`}
-          >
-            {t.label}
-          </button>
-        ))}
+        {PAY_TABS.map((t) => {
+          const isDisabled = inactiveTabs.includes(t.id);
+          return (
+            <button
+              key={t.id}
+              onClick={() => !isDisabled && this.setActiveTab(t.id)}
+              disabled={isDisabled}
+              className={`h-10 rounded-lg border text-sm font-medium transition-all ${
+                isDisabled
+                  ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
+                  : activeTab === t.id
+                    ? "bg-[#00A8B0] text-white border-[#00A8B0]"
+                    : "bg-white text-gray-700 hover:bg-[#00A8B0]/10"
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
     );
   }
