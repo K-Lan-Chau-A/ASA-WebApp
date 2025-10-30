@@ -8,6 +8,7 @@ import Sidebar from "@/components/sidebar";
 import API_URL from "@/config/api";
 import { Search, Plus, X, Upload } from "lucide-react";
 import { Info, ChevronRight } from "lucide-react";
+import debounce from "lodash.debounce";
 
 /* ---------- Helper ---------- */
 const fmt = new Intl.NumberFormat("vi-VN");
@@ -54,22 +55,36 @@ class ProductPageClass extends React.Component {
     quantity: "",
     imageUrl: "",
     units: [],
+    importPrice: "",
 
     showDetailModal: false,
     selectedProduct: null,
     showEditModal: false,
+
+    suggestList: [], // danh sách gợi ý sản phẩm
+    showSuggest: false,
+
+    saving: false,
   };
 
   mounted = false;
 
   /* ---------- LIFECYCLE ---------- */
   componentDidMount() {
+    document.addEventListener("click", this.handleOutsideClick);
     this.mounted = true;
     this.initShop();
   }
+
   componentWillUnmount() {
+    document.removeEventListener("click", this.handleOutsideClick);
     this.mounted = false;
   }
+  handleOutsideClick = (e) => {
+    if (!e.target.closest(".relative")) {
+      this.setState({ showSuggest: false });
+    }
+  };
   componentDidUpdate(prevProps, prevState) {
     if (
       prevState.activeTab !== this.state.activeTab ||
@@ -116,6 +131,12 @@ class ProductPageClass extends React.Component {
   };
 
   /* ---------- FETCH CATEGORIES ---------- */
+  getCategoryNameById = (id) => {
+    const cat = this.state.categories.find(
+      (c) => Number(c.id || c.categoryId) === Number(id)
+    );
+    return cat ? cat.name || cat.categoryName : "Không phân loại";
+  };
 
   fetchCategories = async () => {
     if (!this.state.shopId) return;
@@ -196,6 +217,49 @@ class ProductPageClass extends React.Component {
       if (this.mounted) this.setState({ unitsByPid });
     } catch {}
   };
+  /* ---------- Search sản phẩm gợi ý ---------- */
+  handleSearchProduct = debounce(async (query) => {
+    if (!query || query.length < 2) {
+      this.setState({ suggestList: [], showSuggest: false });
+      return;
+    }
+
+    const token = localStorage.getItem("accessToken");
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = profile.shopId || this.state.shopId;
+    if (!shopId || !token) return;
+
+    try {
+      const url = `${API_URL}/api/products?ShopId=${shopId}&page=1&pageSize=1000`;
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+
+      const q = query
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+      const filtered = items.filter((p) =>
+        (p.productName || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .includes(q)
+      );
+
+      this.setState({
+        suggestList: filtered.slice(0, 5),
+        showSuggest: true,
+      });
+    } catch (err) {
+      console.warn("❌ Lỗi search:", err.message);
+    }
+  }, 400);
 
   /* ---------- PRODUCTS ---------- */
   ensureProducts = async (tabValue, force = false) => {
@@ -245,7 +309,7 @@ class ProductPageClass extends React.Component {
           return {
             id: pid,
             name: p.productName,
-            category: p.categoryName ?? "",
+            category: this.getCategoryNameById(p.categoryId),
             stock: p.quantity ?? 0,
             price: base ? base.price : (p.price ?? 0),
             cost: p.cost ?? 0,
@@ -302,6 +366,7 @@ class ProductPageClass extends React.Component {
           price: p.price || 0,
           isLow: p.isLow || 0,
           categoryId: p.categoryId || "",
+          categoryName: this.getCategoryNameById(p.categoryId),
           quantity: p.stock || 0,
           imageUrl: p.img || "",
           units:
@@ -323,8 +388,29 @@ class ProductPageClass extends React.Component {
 
   /* ---------- HANDLERS ---------- */
   toggleFilter = () => this.setState((s) => ({ showFilter: !s.showFilter }));
-  toggleAddModal = () =>
-    this.setState((s) => ({ showAddModal: !s.showAddModal }));
+  toggleAddModal = () => {
+    if (this.state.showAddModal) {
+      this.setState({
+        showAddModal: false,
+        productName: "",
+        barcode: "",
+        cost: "",
+        price: "",
+        isLow: 0,
+        categoryId: "",
+        quantity: "",
+        imageUrl: "",
+        imageFile: null,
+        units: [],
+        importPrice: "",
+        suggestList: [],
+        showSuggest: false,
+      });
+    } else {
+      this.setState({ showAddModal: true });
+    }
+  };
+
   toggleUnitModal = () =>
     this.setState((s) => ({ showUnitModal: !s.showUnitModal }));
   setActiveTab = (v) => this.setState({ activeTab: v });
@@ -410,12 +496,14 @@ class ProductPageClass extends React.Component {
       return;
     }
 
+    this.setState({ saving: true }); // 🔹 bật loading
+
     try {
       const formData = new FormData();
       formData.append("ShopId", shopId);
       formData.append("ProductName", productName.trim());
       formData.append("Barcode", barcode || null);
-      formData.append("CategoryId", Number(categoryId));
+      formData.append("CategoryId", categoryId ? Number(categoryId) : null);
       formData.append("Price", Number(price));
       formData.append("Cost", Number(cost || 0));
       formData.append("Quantity", Number(quantity || 0));
@@ -450,29 +538,17 @@ class ProductPageClass extends React.Component {
       if (!res.ok) throw new Error(data?.message || "Lỗi tạo sản phẩm");
 
       alert("🎉 Tạo sản phẩm thành công!");
-      this.setState({ loading: true });
       this.toggleAddModal();
 
       await Promise.all([this.fetchUnitsAllByShop(), this.fetchCategories()]);
       await new Promise((r) => setTimeout(r, 500));
 
       await this.ensureProducts(this.state.activeTab, true);
-
-      this.setState({
-        productName: "",
-        barcode: "",
-        cost: "",
-        price: "",
-        quantity: "",
-        imageFile: null,
-        imageUrl: "",
-        units: [],
-        loading: false,
-      });
     } catch (err) {
       console.error(err);
       alert("❌ Thêm sản phẩm thất bại: " + err.message);
-      this.setState({ loading: false });
+    } finally {
+      this.setState({ saving: false });
     }
   };
 
@@ -485,7 +561,6 @@ class ProductPageClass extends React.Component {
       barcode,
       cost,
       price,
-      quantity,
       categoryId,
       isLow,
       units,
@@ -501,37 +576,29 @@ class ProductPageClass extends React.Component {
       formData.append("ShopId", shopId);
       formData.append("ProductName", productName.trim());
       formData.append("Barcode", barcode || null);
-      formData.append("CategoryId", Number(categoryId));
+      formData.append("CategoryId", categoryId ? Number(categoryId) : null);
       formData.append("Price", Number(price));
       formData.append("Cost", Number(cost || 0));
-      formData.append("Quantity", Number(quantity || 0));
       formData.append("Status", 1);
       formData.append("Discount", 0);
       formData.append("IsLow", Number(isLow || 0));
 
-      // 🔹 Units
       const unitsPayload = (
         units.length
           ? units
-          : [
-              {
-                name: "Cái",
-                conversion: 1,
-                price: Number(price),
-                isBase: true,
-              },
-            ]
+          : [{ name: "Cái", conversion: 1, price: Number(price), isBase: true }]
       ).map((u) => ({
         name: u.name || "Cái",
         conversionFactor: Number(u.conversion || 1),
         price: Number(u.price || price),
         isBaseUnit: Boolean(u.isBase),
       }));
-      formData.append("UnitsJson", JSON.stringify(unitsPayload));
 
+      formData.append("UnitsJson", JSON.stringify(unitsPayload));
       if (imageFile) formData.append("ProductImageFile", imageFile);
 
-      // 🔹 Gọi API PUT
+      this.setState({ saving: true });
+
       const res = await fetch(`${API_URL}/api/products/${productId}`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}` },
@@ -543,13 +610,30 @@ class ProductPageClass extends React.Component {
 
       alert("✅ Cập nhật thành công!");
       this.closeEditModal();
-      this.ensureProducts(this.state.activeTab, true);
+
+      await Promise.all([this.fetchUnitsAllByShop(), this.fetchCategories()]);
+      await this.ensureProducts(this.state.activeTab, true);
     } catch (err) {
       alert("❌ Lỗi khi cập nhật: " + err.message);
+    } finally {
+      this.setState({ saving: false });
     }
   };
 
   /* ---------- UI - Modal thêm sản phẩm ---------- */
+  formatMoney = (value) => {
+    if (value === "" || value == null) return "";
+    return Number(value).toLocaleString("vi-VN", {
+      style: "currency",
+      currency: "VND",
+    });
+  };
+
+  parseNumber = (str) => {
+    if (!str) return 0;
+    return Number(String(str).replace(/[^\d]/g, "")) || 0;
+  };
+
   renderAddModal() {
     const {
       categories,
@@ -608,18 +692,80 @@ class ProductPageClass extends React.Component {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                {/* 🔍 Tên sản phẩm có gợi ý dropdown */}
+                <div className="relative">
                   <label className="font-semibold block mb-1">
                     Tên sản phẩm <span className="text-red-500">*</span>
                   </label>
                   <Input
-                    placeholder="Vd. Trà sữa Thái xanh"
-                    value={productName}
-                    onChange={(e) =>
-                      this.setState({ productName: e.target.value })
-                    }
+                    placeholder="VD: Pepsi Cola 330ml"
+                    value={this.state.productName}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      this.setState({ productName: name });
+                      this.handleSearchProduct(name);
+                    }}
                   />
+
+                  {/* Dropdown gợi ý sản phẩm */}
+                  {this.state.showSuggest &&
+                    this.state.suggestList.length > 0 && (
+                      <ul className="absolute z-50 bg-white border border-gray-200 rounded-lg mt-1 w-full max-h-60 overflow-auto shadow-lg">
+                        {this.state.suggestList.map((p) => (
+                          <li
+                            key={p.productId}
+                            className="px-3 py-2 hover:bg-[#E1FBFF] cursor-pointer flex justify-between items-center"
+                            onClick={() => {
+                              this.setState({
+                                productName: p.productName,
+                                barcode: p.barcode || "",
+                                price: p.price || "",
+                                cost: p.cost || "",
+                                importPrice: p.cost * (p.quantity || 1),
+                                categoryId: p.categoryId || "",
+                                quantity: p.quantity || "",
+                                imageUrl: p.productImageURL || p.imageUrl || "",
+                                isLow: p.isLow || 0,
+                                units:
+                                  (p.units || p.unitOptions || []).map((u) => ({
+                                    id: u.unitId || u.productUnitId,
+                                    name: u.unitName,
+                                    conversion: u.conversionFactor,
+                                    price: u.price,
+                                    isBase: u.conversionFactor === 1,
+                                  })) || [],
+                                showSuggest: false,
+                              });
+                            }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={
+                                  p.productImageURL ||
+                                  p.imageUrl ||
+                                  "/no-image.png"
+                                }
+                                alt=""
+                                className="w-8 h-8 rounded object-cover"
+                              />
+                              <div>
+                                <p className="text-sm font-medium text-gray-800">
+                                  {p.productName}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {p.categoryName || "Không phân loại"}
+                                </p>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">
+                              {fmt.format(p.price)}đ
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                 </div>
+
                 <div>
                   <label className="font-semibold block mb-1">Mã vạch</label>
                   <Input
@@ -638,7 +784,10 @@ class ProductPageClass extends React.Component {
                   className="border rounded-md px-3 py-2 w-full"
                   value={categoryId}
                   onChange={(e) =>
-                    this.setState({ categoryId: Number(e.target.value) })
+                    this.setState({
+                      categoryId: Number(e.target.value),
+                      categoryName: this.getCategoryNameById(e.target.value),
+                    })
                   }
                 >
                   <option value="">-- Chọn danh mục --</option>
@@ -646,7 +795,7 @@ class ProductPageClass extends React.Component {
                     .filter((c) => c.id !== "all")
                     .map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.name}
+                        {c.name || c.categoryName}
                       </option>
                     ))}
                 </select>
@@ -672,46 +821,94 @@ class ProductPageClass extends React.Component {
                 />
               </div> */}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="font-semibold block mb-2">
-                    Giá vốn <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Vd. 123456"
-                      value={cost}
-                      onChange={(e) => this.setState({ cost: e.target.value })}
-                    />
-                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
-                      VND
-                    </span>
-                  </div>
+              {/* --- Giá nhập hàng, Giá vốn, Giá bán --- */}
+              <div className="grid grid-cols-3 gap-6">
+                {/* Giá nhập hàng */}
+                <div className="flex flex-col">
+                  <label className="font-semibold mb-1">Giá nhập hàng *</label>
+                  <Input
+                    placeholder="VD: 120000"
+                    value={
+                      this.state.importPrice
+                        ? this.state.importPrice.toLocaleString("vi-VN")
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const raw =
+                        Number(e.target.value.replace(/[^\d]/g, "")) || 0;
+                      const quantity = Number(this.state.quantity) || 1;
+                      const cost = quantity > 0 ? raw / quantity : raw;
+                      this.setState({ importPrice: raw, cost });
+                    }}
+                    className="text-left font-medium"
+                  />
+                  <span className="text-sm text-gray-500 mt-1">
+                    {this.state.importPrice
+                      ? `${fmt.format(this.state.importPrice)} đ`
+                      : ""}
+                  </span>
                 </div>
-                <div>
-                  <label className="font-semibold block mb-2">
-                    Giá bán <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Vd. 123456"
-                      value={price}
-                      onChange={(e) => this.setState({ price: e.target.value })}
-                    />
-                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
-                      VND
-                    </span>
-                  </div>
+
+                {/* Giá vốn */}
+                <div className="flex flex-col">
+                  <label className="font-semibold mb-1">Giá vốn</label>
+                  <Input
+                    readOnly
+                    value={
+                      this.state.cost
+                        ? this.state.cost.toLocaleString("vi-VN")
+                        : ""
+                    }
+                    className="text-left font-medium bg-gray-50"
+                  />
+                  <span className="text-sm text-gray-500 mt-1">
+                    {this.state.cost ? `${fmt.format(this.state.cost)} đ` : ""}
+                  </span>
+                </div>
+
+                {/* Giá bán */}
+                <div className="flex flex-col">
+                  <label className="font-semibold mb-1">Giá bán *</label>
+                  <Input
+                    placeholder="VD: 150000"
+                    value={
+                      this.state.price
+                        ? this.state.price.toLocaleString("vi-VN")
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const raw =
+                        Number(e.target.value.replace(/[^\d]/g, "")) || 0;
+                      this.setState({ price: raw });
+                    }}
+                    className="text-left font-medium"
+                  />
+                  <span className="text-sm text-gray-500 mt-1">
+                    {this.state.price
+                      ? `${fmt.format(this.state.price)} đ`
+                      : ""}
+                  </span>
                 </div>
               </div>
 
-              <div>
+              {/* --- Số lượng --- */}
+              <div className="mt-4">
                 <label className="font-semibold block mb-1">Số lượng</label>
                 <Input
-                  placeholder="Vd. 10"
-                  value={quantity}
-                  onChange={(e) => this.setState({ quantity: e.target.value })}
+                  placeholder="VD: 10"
+                  value={this.state.quantity}
+                  onChange={(e) => {
+                    const quantity = Number(e.target.value) || 0;
+                    const importPrice = Number(this.state.importPrice) || 0;
+                    const cost =
+                      quantity > 0 ? importPrice / quantity : importPrice;
+                    this.setState({ quantity, cost });
+                  }}
+                  className="text-left font-medium"
                 />
+                <span className="text-sm text-gray-500 mt-1">
+                  {this.state.quantity ? `${this.state.quantity} sản phẩm` : ""}
+                </span>
               </div>
             </div>
 
@@ -812,10 +1009,41 @@ class ProductPageClass extends React.Component {
               Hủy
             </Button>
             <Button
-              className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+              disabled={this.state.saving}
+              className={`rounded-lg px-6 py-2 text-white transition-all ${
+                this.state.saving
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-[#00A8B0] hover:bg-[#00929A]"
+              }`}
               onClick={this.handleSaveProduct}
             >
-              Lưu sản phẩm
+              {this.state.saving ? (
+                <div className="flex items-center gap-2">
+                  <svg
+                    className="animate-spin h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                    ></path>
+                  </svg>
+                  <span>Đang lưu...</span>
+                </div>
+              ) : (
+                "Lưu sản phẩm"
+              )}
             </Button>
           </div>
         </div>
@@ -824,18 +1052,11 @@ class ProductPageClass extends React.Component {
   }
 
   renderEditModal() {
-    const {
-      categories,
-      categoryId,
-      productName,
-      barcode,
-      cost,
-      price,
-      isLow,
-      quantity,
-    } = this.state;
+    const { categories, categoryId, productName, barcode, cost, price, isLow } =
+      this.state;
+
     return (
-      <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
         <div className="bg-white w-[1100px] h-[90vh] shadow-2xl rounded-2xl p-10 overflow-y-auto relative">
           <button
             onClick={this.closeEditModal}
@@ -843,6 +1064,7 @@ class ProductPageClass extends React.Component {
           >
             <X className="w-6 h-6" />
           </button>
+
           <h2 className="text-3xl font-extrabold text-[#007E85] mb-8">
             ✏️ CHỈNH SỬA SẢN PHẨM
           </h2>
@@ -850,9 +1072,10 @@ class ProductPageClass extends React.Component {
           <div className="grid grid-cols-2 gap-8">
             {/* LEFT */}
             <div className="space-y-6">
+              {/* Ảnh sản phẩm */}
               <div className="flex flex-col items-center">
                 <label
-                  htmlFor="imageUpload"
+                  htmlFor="editImageUpload"
                   className="w-[140px] h-[140px] rounded-xl border-2 border-dashed border-[#00A8B0] bg-[#E1FBFF] grid place-items-center text-[#00A8B0] font-semibold text-sm cursor-pointer hover:bg-[#D5F7F9] transition overflow-hidden"
                 >
                   {this.state.imageUrl ? (
@@ -869,7 +1092,7 @@ class ProductPageClass extends React.Component {
                   )}
                 </label>
                 <input
-                  id="imageUpload"
+                  id="editImageUpload"
                   type="file"
                   accept="image/*"
                   className="hidden"
@@ -880,32 +1103,35 @@ class ProductPageClass extends React.Component {
                 </p>
               </div>
 
+              {/* Tên sản phẩm & Mã vạch */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="font-semibold block mb-1">
                     Tên sản phẩm <span className="text-red-500">*</span>
                   </label>
                   <Input
-                    placeholder="Vd. Trà sữa Thái xanh"
+                    placeholder="VD: Trà sữa Matcha"
                     value={productName}
                     onChange={(e) =>
                       this.setState({ productName: e.target.value })
                     }
                   />
                 </div>
+
                 <div>
                   <label className="font-semibold block mb-1">Mã vạch</label>
                   <Input
-                    placeholder="Vd. 1234567890"
+                    placeholder="VD: 8938505974132"
                     value={barcode}
                     onChange={(e) => this.setState({ barcode: e.target.value })}
                   />
                 </div>
               </div>
 
+              {/* Danh mục */}
               <div>
                 <label className="font-semibold block mb-1">
-                  Phân loại <span className="text-red-500">*</span>
+                  Danh mục <span className="text-red-500">*</span>
                 </label>
                 <select
                   className="border rounded-md px-3 py-2 w-full"
@@ -925,66 +1151,38 @@ class ProductPageClass extends React.Component {
                 </select>
               </div>
 
-              {/* <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
-                    🧋
-                  </div>
-                  <div>
-                    <p className="font-semibold">Báo hết món</p>
-                    <p className="text-sm text-gray-500">
-                      Hiển thị thông báo hết món
-                    </p>
-                  </div>
+              {/* Giá vốn & Giá bán */}
+              <div className="grid grid-cols-2 gap-6">
+                {/* Giá vốn */}
+                <div className="flex flex-col">
+                  <label className="font-semibold mb-1">Giá vốn</label>
+                  <Input
+                    readOnly
+                    value={cost ? cost.toLocaleString("vi-VN") : ""}
+                    className="text-left font-medium bg-gray-50"
+                  />
+                  <span className="text-sm text-gray-500 mt-1">
+                    {cost ? `${fmt.format(cost)} đ` : ""}
+                  </span>
                 </div>
-                <input
-                  type="checkbox"
-                  className="toggle"
-                  checked={isLow}
-                  onChange={(e) => this.setState({ isLow: e.target.checked })}
-                />
-              </div> */}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="font-semibold block mb-2">
-                    Giá vốn <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Vd. 123456"
-                      value={cost}
-                      onChange={(e) => this.setState({ cost: e.target.value })}
-                    />
-                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
-                      VND
-                    </span>
-                  </div>
+                {/* Giá bán */}
+                <div className="flex flex-col">
+                  <label className="font-semibold mb-1">Giá bán *</label>
+                  <Input
+                    placeholder="VD: 35000"
+                    value={price ? price.toLocaleString("vi-VN") : ""}
+                    onChange={(e) => {
+                      const raw =
+                        Number(e.target.value.replace(/[^\d]/g, "")) || 0;
+                      this.setState({ price: raw });
+                    }}
+                    className="text-left font-medium"
+                  />
+                  <span className="text-sm text-gray-500 mt-1">
+                    {price ? `${fmt.format(price)} đ` : ""}
+                  </span>
                 </div>
-                <div>
-                  <label className="font-semibold block mb-2">
-                    Giá bán <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Vd. 123456"
-                      value={price}
-                      onChange={(e) => this.setState({ price: e.target.value })}
-                    />
-                    <span className="bg-gray-100 border rounded-md px-3 flex items-center">
-                      VND
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="font-semibold block mb-1">Số lượng</label>
-                <Input
-                  placeholder="Vd. 10"
-                  value={quantity}
-                  onChange={(e) => this.setState({ quantity: e.target.value })}
-                />
               </div>
             </div>
 
@@ -993,6 +1191,8 @@ class ProductPageClass extends React.Component {
               <h3 className="font-bold text-lg text-gray-800 mb-2">
                 Thông tin chi tiết
               </h3>
+
+              {/* Ngưỡng cảnh báo */}
               <div className="bg-[#E1FBFF] rounded-xl p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-white/60 rounded-lg grid place-items-center">
@@ -1021,6 +1221,7 @@ class ProductPageClass extends React.Component {
                 </div>
               </div>
 
+              {/* Đơn vị */}
               <div className="border rounded-lg p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div>
@@ -1038,12 +1239,11 @@ class ProductPageClass extends React.Component {
                   </Button>
                 </div>
 
-                {/*  Danh sách đơn vị hiển thị sau khi cấu hình */}
                 <div className="space-y-2">
                   {this.state.units.length === 0 ? (
                     <p className="text-gray-400 text-sm">Chưa có đơn vị</p>
                   ) : (
-                    this.state.units.map((u, idx) => (
+                    this.state.units.map((u) => (
                       <div
                         key={u.id}
                         className="flex justify-between items-center bg-white border rounded-lg px-3 py-2"
@@ -1052,12 +1252,11 @@ class ProductPageClass extends React.Component {
                           <span className="font-semibold text-gray-700">
                             {u.name || "—"}
                           </span>
-                          {u.isBase && (
+                          {u.isBase ? (
                             <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
                               cơ bản
                             </span>
-                          )}
-                          {!u.isBase && (
+                          ) : (
                             <span className="text-xs text-gray-500">
                               x{u.conversion || 1}
                             </span>
@@ -1075,6 +1274,8 @@ class ProductPageClass extends React.Component {
               </div>
             </div>
           </div>
+
+          {/* BUTTON */}
           <div className="mt-8 flex justify-end gap-4">
             <Button
               variant="outline"
@@ -1084,10 +1285,41 @@ class ProductPageClass extends React.Component {
               Hủy
             </Button>
             <Button
-              className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+              disabled={this.state.saving}
+              className={`rounded-lg px-6 py-2 text-white transition-all ${
+                this.state.saving
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-[#00A8B0] hover:bg-[#00929A]"
+              }`}
               onClick={this.handleUpdateProduct}
             >
-              Lưu thay đổi
+              {this.state.saving ? (
+                <div className="flex items-center gap-2">
+                  <svg
+                    className="animate-spin h-4 w-4 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                    ></path>
+                  </svg>
+                  <span>Đang lưu...</span>
+                </div>
+              ) : (
+                "Lưu thay đổi"
+              )}
             </Button>
           </div>
         </div>
@@ -1396,7 +1628,7 @@ class ProductPageClass extends React.Component {
     } = this.state;
 
     return (
-      <div className="flex h-screen w-screen overflow-hidden">
+      <div className="flex h-screen w-screen overflow-x-hidden">
         <Sidebar />
         <div className="flex-1 bg-gradient-to-r from-[#EAFDFC] via-[#F7E7CE] to-[#E0F7FA] p-10 overflow-y-auto relative">
           <div className="flex items-center justify-between mb-8">

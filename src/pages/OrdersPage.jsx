@@ -23,6 +23,7 @@ import {
   X,
   CheckCircle,
   MessageCircle,
+  User,
 } from "lucide-react";
 import PrintService from "@/services/PrintService";
 
@@ -104,6 +105,7 @@ class OrdersPageClass extends React.Component {
       email: "",
       gender: 0,
       birthday: "",
+      avatar: "",
     },
 
     customerSuggestions: [],
@@ -112,6 +114,7 @@ class OrdersPageClass extends React.Component {
     notifications: [],
     showNotifications: false,
     unreadCount: 0,
+    savingCustomer: false,
   };
   showPopup = (title, message, type = "info") => {
     const toastFn = this.props.toast;
@@ -275,6 +278,15 @@ class OrdersPageClass extends React.Component {
     } catch (err) {
       console.warn("⚠️ Background refresh failed:", err);
     }
+  };
+  handleShowAddCustomer = () => {
+    this.setState({
+      showAddCustomer: true,
+      addingCustomer: {
+        ...this.state.addingCustomer,
+        phone: this.state.customerSearch,
+      },
+    });
   };
 
   /* ===================== XỬ LÝ SIGNALR THÔNG BÁO ===================== */
@@ -1139,11 +1151,13 @@ class OrdersPageClass extends React.Component {
     const { shopId, addingCustomer } = this.state;
     const token = localStorage.getItem("accessToken");
     if (!addingCustomer.fullName || !addingCustomer.phone)
-      this.showPopup(
+      return this.showPopup(
         "Thiếu thông tin",
         "Vui lòng nhập đủ họ tên và số điện thoại.",
         "warning"
       );
+
+    this.setState({ savingCustomer: true });
 
     try {
       const payload = {
@@ -1163,16 +1177,21 @@ class OrdersPageClass extends React.Component {
         },
         body: JSON.stringify(payload),
       });
+
       const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || "Lỗi tạo khách hàng");
+
+      this.showPopup("Thành công", "Khách hàng đã được thêm!", "success");
 
       this.setState({
         foundCustomer: data,
         showAddCustomer: false,
         customerSearch: data.phone,
+        savingCustomer: false,
       });
     } catch (e) {
-      alert(e.message);
+      this.showPopup("Lỗi", e.message, "error");
+      this.setState({ savingCustomer: false });
     }
   };
 
@@ -1831,16 +1850,8 @@ class OrdersPageClass extends React.Component {
                     </Button>
                   ) : (
                     <Button
-                      className="h-9 px-4 bg-[#00A8B0] text-white rounded-full hover:bg-[#00939a] flex items-center justify-center whitespace-nowrap"
-                      onClick={() =>
-                        this.setState({
-                          showAddCustomer: true,
-                          addingCustomer: {
-                            ...this.state.addingCustomer,
-                            phone: this.state.customerSearch,
-                          },
-                        })
-                      }
+                      className="h-9 px-4 bg-[#00A8B0] text-white rounded-full hover:bg-[#00939a]"
+                      onClick={this.handleShowAddCustomer}
                     >
                       <Plus className="w-4 h-4 mr-1" /> Thêm
                     </Button>
@@ -2001,54 +2012,166 @@ class OrdersPageClass extends React.Component {
         {/* MODAL THÊM KHÁCH HÀNG */}
         {this.state.showAddCustomer && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl w-[400px] shadow-2xl">
-              <h3 className="text-lg font-bold mb-4 text-[#007E85]">
-                ➕ Thêm khách hàng mới
-              </h3>
-              <div className="space-y-3">
-                <Input
-                  placeholder="Họ tên"
-                  value={this.state.addingCustomer.fullName}
-                  onChange={(e) =>
-                    this.setState({
-                      addingCustomer: {
-                        ...this.state.addingCustomer,
-                        fullName: e.target.value,
-                      },
-                    })
-                  }
-                />
-                <Input
-                  placeholder="Số điện thoại"
-                  value={this.state.addingCustomer.phone}
-                  readOnly
-                />
-                <Input
-                  placeholder="Email"
-                  value={this.state.addingCustomer.email}
-                  onChange={(e) =>
-                    this.setState({
-                      addingCustomer: {
-                        ...this.state.addingCustomer,
-                        email: e.target.value,
-                      },
-                    })
-                  }
-                />
+            <div className="bg-gradient-to-br from-white via-[#F9FCFD] to-[#E8FBFB] p-6 rounded-2xl w-[500px] shadow-[0_8px_25px_rgba(0,0,0,0.15)] relative animate-in fade-in-0 zoom-in-95 duration-300 border border-[#C8F5F5]/50 backdrop-blur-sm">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-5 border-b pb-2">
+                <h3 className="text-2xl font-bold text-[#007E85] flex items-center gap-2">
+                  <User className="w-5 h-5 text-[#00A8B0]" /> Thêm khách hàng
+                  mới
+                </h3>
+                <button
+                  className="text-gray-400 hover:text-red-500 transition"
+                  onClick={() => this.setState({ showAddCustomer: false })}
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="flex justify-end gap-3 mt-5">
+              {/* Form nội dung */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Họ tên */}
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    Họ và tên <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    placeholder="Nguyễn Văn A"
+                    value={this.state.addingCustomer.fullName}
+                    onChange={(e) =>
+                      this.setState({
+                        addingCustomer: {
+                          ...this.state.addingCustomer,
+                          fullName: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </div>
+
+                {/* Số điện thoại */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    Số điện thoại <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    placeholder="0901234567"
+                    value={this.state.addingCustomer.phone}
+                    onChange={(e) =>
+                      this.setState({
+                        addingCustomer: {
+                          ...this.state.addingCustomer,
+                          phone: e.target.value.replace(/\D/g, ""),
+                        },
+                      })
+                    }
+                    className="text-gray-800"
+                  />
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    Email
+                  </label>
+                  <Input
+                    type="email"
+                    placeholder="email@example.com"
+                    value={this.state.addingCustomer.email}
+                    onChange={(e) =>
+                      this.setState({
+                        addingCustomer: {
+                          ...this.state.addingCustomer,
+                          email: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </div>
+
+                {/* Giới tính */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    Giới tính
+                  </label>
+                  <select
+                    className="border rounded-md h-9 w-full px-2 text-sm"
+                    value={this.state.addingCustomer.gender}
+                    onChange={(e) =>
+                      this.setState({
+                        addingCustomer: {
+                          ...this.state.addingCustomer,
+                          gender: Number(e.target.value),
+                        },
+                      })
+                    }
+                  >
+                    <option value={0}>Nam</option>
+                    <option value={1}>Nữ</option>
+                    <option value={2}>Khác</option>
+                  </select>
+                </div>
+
+                {/* Ngày sinh */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-1">
+                    Ngày sinh
+                  </label>
+                  <Input
+                    type="date"
+                    value={this.state.addingCustomer.birthday}
+                    onChange={(e) =>
+                      this.setState({
+                        addingCustomer: {
+                          ...this.state.addingCustomer,
+                          birthday: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end gap-3 mt-6 pt-3 border-t">
                 <Button
                   variant="outline"
                   onClick={() => this.setState({ showAddCustomer: false })}
+                  className="rounded-lg"
                 >
                   Hủy
                 </Button>
                 <Button
-                  className="bg-[#00A8B0] text-white"
+                  className="bg-[#00A8B0] text-white rounded-lg hover:bg-[#00929A] flex items-center gap-2"
+                  disabled={this.state.savingCustomer}
                   onClick={this.createCustomer}
                 >
-                  Lưu
+                  {this.state.savingCustomer ? (
+                    <>
+                      <svg
+                        className="animate-spin h-4 w-4 text-white"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v8z"
+                        />
+                      </svg>
+                      Đang lưu...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" /> Lưu khách hàng
+                    </>
+                  )}
                 </Button>
               </div>
             </div>

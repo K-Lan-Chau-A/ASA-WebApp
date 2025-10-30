@@ -32,10 +32,10 @@ const fmtMoney = (n) =>
   });
 
 const rankMap = {
-  "1": { name: "Đồng", color: "bg-[#CD7F32]", text: "text-white" },
-  "2": { name: "Bạc", color: "bg-gray-400", text: "text-white" },
-  "3": { name: "Vàng", color: "bg-yellow-400", text: "text-black" },
-  "4": { name: "Kim cương", color: "bg-blue-400", text: "text-white" },
+  1: { name: "Đồng", color: "bg-[#CD7F32]", text: "text-white" },
+  2: { name: "Bạc", color: "bg-gray-400", text: "text-white" },
+  3: { name: "Vàng", color: "bg-yellow-400", text: "text-black" },
+  4: { name: "Kim cương", color: "bg-blue-400", text: "text-white" },
 };
 
 class CustomerPageClass extends React.Component {
@@ -55,7 +55,9 @@ class CustomerPageClass extends React.Component {
       spent: 0,
       gender: 0,
       birthday: "",
+      avatar: "", // URL hoặc base64 preview
     },
+    avatarFile: null, // file thực tế để upload
   };
 
   mounted = false;
@@ -177,36 +179,64 @@ class CustomerPageClass extends React.Component {
   handleClose = () => this.setState({ showDialog: false });
 
   handleSave = async () => {
-    const { form, shopId, editing } = this.state;
+    const { form, shopId, editing, avatarFile } = this.state;
     if (!form.fullName.trim() || !form.phone.trim())
       return alert("Vui lòng nhập tên và số điện thoại!");
 
     const token = localStorage.getItem("accessToken");
     const isEdit = !!editing;
-
     const url = isEdit
       ? `${API_URL}/api/customers/${editing.customerId}`
       : `${API_URL}/api/customers`;
 
-    const payload = { ...form, shopId, status: 1 };
-
     try {
-      const res = await fetch(url, {
-        method: isEdit ? "PUT" : "POST",
-        headers: {
+      let body, headers;
+
+      if (avatarFile) {
+        const formData = new FormData();
+        formData.append("fullName", form.fullName);
+        formData.append("phone", form.phone);
+        formData.append("email", form.email || "");
+        formData.append("gender", form.gender || 0);
+        formData.append("birthday", form.birthday || null);
+        formData.append("shopId", shopId);
+        formData.append("avatar", avatarFile);
+        body = formData;
+        headers = token ? { Authorization: `Bearer ${token}` } : {};
+      } else {
+        body = JSON.stringify({
+          fullName: form.fullName,
+          phone: form.phone,
+          email: form.email || "",
+          gender: form.gender || 0,
+          birthday: form.birthday || null,
+          avatar: form.avatar || "",
+          shopId,
+        });
+        headers = {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
+        };
+      }
+
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers,
+        body,
       });
 
       const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
+      alert(
+        isEdit
+          ? "✅ Cập nhật khách hàng thành công!"
+          : "✅ Thêm khách hàng thành công!"
+      );
       this.fetchCustomers();
       this.handleClose();
     } catch (e) {
-      alert(`Lỗi lưu khách hàng: ${e.message}`);
+      alert(`❌ Lỗi lưu khách hàng: ${e.message}`);
     }
   };
 
@@ -234,7 +264,10 @@ class CustomerPageClass extends React.Component {
   getFiltered = () => {
     const { search, customers } = this.state;
     if (!search.trim()) return customers;
-    const q = search.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const q = search
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
     return customers.filter((c) =>
       c.fullName.toLowerCase().normalize("NFD").includes(q)
     );
@@ -242,8 +275,16 @@ class CustomerPageClass extends React.Component {
 
   /* ---------- RENDER ---------- */
   render() {
-    const { customers, nfcs, search, loading, error, showDialog, form, editing } =
-      this.state;
+    const {
+      customers,
+      nfcs,
+      search,
+      loading,
+      error,
+      showDialog,
+      form,
+      editing,
+    } = this.state;
     const filtered = this.getFiltered();
 
     return (
@@ -288,33 +329,52 @@ class CustomerPageClass extends React.Component {
               {filtered.map((cus) => {
                 const rank = rankMap[cus.rankid] || rankMap["2"];
                 const nfc = nfcs.find((n) => n.customerId === cus.customerId);
+
+                const genderLabel =
+                  cus.gender === 0 ? "Nam" : cus.gender === 1 ? "Nữ" : "Khác";
+                const avatarUrl =
+                  cus.avatar && cus.avatar !== "string" ? cus.avatar : null;
+
                 return (
                   <Card
                     key={cus.customerId}
-                    className="p-6 bg-white rounded-2xl shadow-md hover:shadow-lg border border-gray-100 transition-all"
+                    className="p-6 bg-white rounded-2xl shadow-md hover:shadow-xl border border-gray-100 transition-all"
                   >
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-[#E0F7FA] rounded-full p-3">
-                          <User className="w-6 h-6 text-[#007E85]" />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-xl text-[#007E85]">
-                            {cus.fullName}
-                          </h3>
-                          <div
-                            className={`flex items-center gap-1 px-2 py-1 mt-1 text-xs rounded-full ${rank.color} ${rank.text}`}
-                          >
-                            {rank.name}
+                    {/* Ảnh + Tên + Hạng */}
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="relative">
+                        {avatarUrl ? (
+                          <img
+                            src={avatarUrl}
+                            alt={cus.fullName}
+                            className="w-16 h-16 rounded-full object-cover border-2 border-[#00A8B0]"
+                          />
+                        ) : (
+                          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center border">
+                            <User className="w-7 h-7 text-gray-400" />
                           </div>
-                        </div>
+                        )}
+                        <span
+                          className={`absolute -bottom-1 -right-1 px-2 py-0.5 rounded-full text-[10px] ${rank.color} ${rank.text}`}
+                        >
+                          {rank.name}
+                        </span>
+                      </div>
+
+                      <div className="flex-1">
+                        <h3 className="font-bold text-xl text-[#007E85] leading-snug">
+                          {cus.fullName}
+                        </h3>
+                        <p className="text-sm text-gray-600">
+                          👤 {genderLabel} | 🎂 {fmtDate(cus.birthday)}
+                        </p>
                       </div>
 
                       <div className="flex gap-2">
                         <Button
                           variant="outline"
                           size="icon"
-                          className="w-9 h-9"
+                          className="w-9 h-9 hover:bg-[#E0F7FA]"
                           onClick={() => this.handleOpenEdit(cus)}
                         >
                           <Edit className="w-4 h-4 text-[#007E85]" />
@@ -322,7 +382,7 @@ class CustomerPageClass extends React.Component {
                         <Button
                           variant="outline"
                           size="icon"
-                          className="w-9 h-9"
+                          className="w-9 h-9 hover:bg-red-50"
                           onClick={() => this.handleDelete(cus)}
                         >
                           <Trash2 className="w-4 h-4 text-red-500" />
@@ -330,36 +390,28 @@ class CustomerPageClass extends React.Component {
                       </div>
                     </div>
 
-                    <p className="text-sm text-gray-600 mt-2">
-                      📞 {cus.phone || "—"}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      📧 {cus.email || "—"}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      🎂 {fmtDate(cus.birthday)}
-                    </p>
-                    <p className="text-sm text-gray-600 font-medium mt-1">
-                      💰 Chi tiêu:{" "}
-                      <span className="text-[#007E85]">{fmtMoney(cus.spent)}</span>
-                    </p>
+                    {/* Thông tin chi tiết */}
+                    <div className="space-y-1 text-sm text-gray-700">
+                      <p>
+                        📞{" "}
+                        <span className="font-medium">{cus.phone || "—"}</span>
+                      </p>
+                      <p>📧 {cus.email || "—"}</p>
 
-                    {/* NFC Info */}
-                    <div className="mt-3">
                       {nfc ? (
-                        <div className="flex items-center gap-2 bg-[#E1FBFF] text-[#007E85] px-3 py-2 rounded-xl text-sm">
-                          <CreditCard className="w-4 h-4" />
-                          <span>
-                            NFC: <b>{nfc.nfcCode}</b> – Số dư:{" "}
-                            <b>{fmtMoney(nfc.balance)}</b>
-                          </span>
-                        </div>
+                        <p className="bg-[#E0F7FA]/80 px-2 py-1 rounded-lg mt-1 text-[#007E85]">
+                          💳 NFC: <b>{nfc.nfcCode}</b> — Số dư:{" "}
+                          <b>{fmtMoney(nfc.balance)}</b>
+                        </p>
                       ) : (
-                        <div className="flex items-center gap-2 bg-gray-200 text-gray-700 px-3 py-2 rounded-xl text-sm">
-                          <CreditCard className="w-4 h-4" />
-                          <span>Chưa có NFC</span>
-                        </div>
+                        <p className="text-gray-500 italic">
+                          💳 Chưa có thẻ NFC
+                        </p>
                       )}
+
+                      <p className="pt-1 text-[#007E85] font-semibold">
+                        💰 Chi tiêu: {fmtMoney(cus.spent || 0)}
+                      </p>
                     </div>
                   </Card>
                 );
@@ -387,7 +439,9 @@ class CustomerPageClass extends React.Component {
                   <Input
                     value={form.fullName}
                     onChange={(e) =>
-                      this.setState({ form: { ...form, fullName: e.target.value } })
+                      this.setState({
+                        form: { ...form, fullName: e.target.value },
+                      })
                     }
                     placeholder="Nguyễn Văn A"
                   />
@@ -400,7 +454,9 @@ class CustomerPageClass extends React.Component {
                   <Input
                     value={form.phone}
                     onChange={(e) =>
-                      this.setState({ form: { ...form, phone: e.target.value } })
+                      this.setState({
+                        form: { ...form, phone: e.target.value },
+                      })
                     }
                     placeholder="0901234567"
                   />
@@ -413,7 +469,9 @@ class CustomerPageClass extends React.Component {
                   <Input
                     value={form.email}
                     onChange={(e) =>
-                      this.setState({ form: { ...form, email: e.target.value } })
+                      this.setState({
+                        form: { ...form, email: e.target.value },
+                      })
                     }
                     placeholder="email@example.com"
                   />
@@ -433,6 +491,60 @@ class CustomerPageClass extends React.Component {
                     }
                   />
                 </div>
+              </div>
+              {/* Giới tính */}
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Giới tính
+                </label>
+                <select
+                  className="border rounded-md px-3 py-2 w-full"
+                  value={form.gender}
+                  onChange={(e) =>
+                    this.setState({
+                      form: { ...form, gender: Number(e.target.value) },
+                    })
+                  }
+                >
+                  <option value={0}>Nam</option>
+                  <option value={1}>Nữ</option>
+                  <option value={2}>Khác</option>
+                </select>
+              </div>
+
+              {/* Ảnh đại diện */}
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Ảnh đại diện
+                </label>
+                <label className="w-full border-2 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition flex flex-col items-center justify-center py-6">
+                  {form.avatar ? (
+                    <img
+                      src={form.avatar}
+                      alt="Preview"
+                      className="w-20 h-20 rounded-full object-cover border"
+                    />
+                  ) : (
+                    <>
+                      <User className="w-6 h-6 text-gray-400 mb-1" />
+                      <span className="text-xs text-gray-500">Tải ảnh lên</span>
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const url = URL.createObjectURL(file);
+                      this.setState({
+                        avatarFile: file,
+                        form: { ...form, avatar: url },
+                      });
+                    }}
+                  />
+                </label>
               </div>
 
               <DialogFooter className="flex justify-end gap-3">

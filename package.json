@@ -19,6 +19,7 @@
     "clsx": "^2.1.1",
     "escpos": "^3.0.0-alpha.6",
     "escpos-usb": "^3.0.0-alpha.4",
+    "lodash.debounce": "^4.0.8",
     "lucide-react": "^0.541.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
