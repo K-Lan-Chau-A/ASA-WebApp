@@ -1005,9 +1005,12 @@ class PaymentPageClass extends React.Component {
   /* ---------- Printer (Browser mode) ---------- */
   async handlePrintReceipt() {
     try {
+      const orderId = this.state.displayOrderId || this.state.orderId;
+      const freshOrder = await this.fetchOrderHead(orderId);
       const subTotal = this.totalBefore;
-      const discount = this.discountSum;
-      const total = this.totalAfter;
+      const discountSum = this.discountSum;
+      const totalAfter = this.totalAfter;
+
       const items = (this.state.orders || []).map((o) => ({
         name: o.name,
         qty: Number(o.qty || 0),
@@ -1023,7 +1026,7 @@ class PaymentPageClass extends React.Component {
           this.state.note,
           this.state.generatedNote,
           (this.state.orders || [])
-            .map((o) => o.note)
+            .map((p) => p.note)
             .filter(Boolean)
             .join("; "),
         ]
@@ -1032,31 +1035,33 @@ class PaymentPageClass extends React.Component {
       }));
 
       const order = {
-        id: this.state.displayOrderId || this.state.orderId,
+        id: orderId,
         items,
-        total, // SAU GIẢM
-        subTotal, // TRƯỚC GIẢM
-        discount: this.state.manualDiscountPercent || 0,
+        subTotal, // Tổng trước giảm
+        totalAfter, // Tổng sau giảm
+        discountPercent: this.state.manualDiscountPercent || 0,
+        discountValue: discountSum || 0,
         voucherInfo: this.state.voucherInfo || null,
         voucherCode: this.state.voucherInfo?.code || null,
         voucherValue: this.state.voucherDiscount || 0,
-        total: this.totalAfter,
         method: this.state.activeTab,
         qrUrl: this.state.qrUrl,
         received:
           this.state.activeTab === "cash"
             ? this.state.received > 0
               ? this.state.received
-              : total
+              : totalAfter
             : null,
         change:
           this.state.activeTab === "cash"
-            ? Math.max(0, (this.state.received || total) - total)
+            ? Math.max(0, (this.state.received || totalAfter) - totalAfter)
             : null,
         note: this.state.note || "",
-        customerId: this.state.customerId || null,
-        customerName: this.state.customerName || "",
-        customerPhone: this.state.customerPhone || "",
+        customerId: this.state.customerId || freshOrder?.customerId || null,
+        customerName:
+          this.state.customerName || freshOrder?.customerName || "Khách lẻ",
+        customerPhone:
+          this.state.customerPhone || freshOrder?.customerPhone || "",
       };
 
       const PrintTemplate = (await import("@/lib/PrintTemplate")).default;

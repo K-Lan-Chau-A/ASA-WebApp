@@ -1366,13 +1366,16 @@ class OrdersPageClass extends React.Component {
                   onValueChange={(v) => this.setActiveTab(v)}
                   className="flex flex-col h-full"
                 >
-                  <div className="sticky top-0 z-10 bg-white rounded-t-xl overflow-hidden shadow-sm -mt-[3px]">
+                  <div className="sticky top-0 z-10 bg-white -mt-[3px]">
                     <TabsList
                       className="
-                        flex items-center gap-10 px-6
-                        bg-white border-b border-t border-t-transparent overflow-x-auto
-                        rounded-t-xl shadow-sm
-                      "
+      flex items-center gap-6 px-6
+      bg-white
+      border-b border-gray-200
+      overflow-x-auto
+      rounded-t-xl
+      text-sm font-medium text-gray-600
+    "
                     >
                       {categories.map((c) => (
                         <TabsTrigger
@@ -1399,6 +1402,8 @@ class OrdersPageClass extends React.Component {
                         loading: false,
                         error: "",
                       };
+
+                      // ✅ Dữ liệu hiển thị cho từng tab
                       const list =
                         c.id === "all"
                           ? entry.items?.length
@@ -1410,7 +1415,14 @@ class OrdersPageClass extends React.Component {
                         <TabsContent
                           key={c.id}
                           value={c.value}
-                          className="p-4 grid grid-cols-4 gap-4"
+                          className="
+                              p-4
+                              grid grid-cols-4 gap-4
+                              place-items-start
+                              content-start
+                              auto-rows-auto
+                              data-[state=inactive]:hidden
+                            "
                         >
                           {entry.loading ? (
                             <div className="col-span-full text-sm text-gray-500">
@@ -1431,7 +1443,10 @@ class OrdersPageClass extends React.Component {
                             </div>
                           ) : list && list.length ? (
                             list.map((p) => (
-                              <Card className="relative rounded-xl">
+                              <Card
+                                key={p.id}
+                                className="relative rounded-xl hover:shadow-md transition"
+                              >
                                 {p.hasPromo &&
                                   p.discountPercent > 0 &&
                                   p.promoType !== 1 && (
@@ -1439,58 +1454,43 @@ class OrdersPageClass extends React.Component {
                                       -{p.discountPercent}%
                                     </div>
                                   )}
-                                <CardContent className="p-2 flex flex-col items-center text-center">
+
+                                <CardContent className="p-2 flex flex-col items-center text-center flex-1 justify-between">
                                   <img
                                     src={
                                       p.img ||
                                       "https://placehold.co/150x150?text=No+Image"
                                     }
                                     alt={p.name}
-                                    className="w-full h-32 object-cover rounded-lg"
+                                    className="w-[90%] h-[100px] object-contain rounded-lg mb-2"
                                     onError={(e) => {
                                       e.currentTarget.src =
                                         "https://placehold.co/150x150?text=No+Image";
                                     }}
                                   />
 
-                                  {/* Tên sản phẩm */}
-                                  <h3 className="mt-2 text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
-                                    {p.name}
-                                  </h3>
-
-                                  {/* Giá */}
-                                  <div className="min-h-[1.5rem] flex flex-col items-center">
-                                    {p.hasPromo ? (
-                                      <>
-                                        <span className="text-gray-400 text-sm line-through">
-                                          {fmt.format(p.basePrice)}đ
-                                        </span>
-                                        <span className="text-orange-500 font-bold">
-                                          {fmt.format(p.price)}đ
-                                        </span>
-                                      </>
-                                    ) : (
-                                      <span className="text-orange-500 font-bold">
-                                        {fmt.format(p.price)}đ
-                                      </span>
-                                    )}
-                                  </div>
-                                  {/* Đơn vị */}
-                                  <div className="text-xs text-gray-500 min-h-[1rem]">
-                                    Đơn vị mặc định: {p.unit || "—"}
-                                  </div>
-
-                                  {/* Đánh giá + Add */}
-                                  <div className="flex items-center justify-between w-full mt-2">
-                                    <div className="flex items-center text-yellow-500 text-xs">
-                                      <Star size={14} fill="currentColor" /> 4.5
+                                  <div className="flex flex-col items-center justify-between flex-1 w-full">
+                                    <h3 className="text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
+                                      {p.name}
+                                    </h3>
+                                    <div className="text-orange-500 font-bold">
+                                      {fmt.format(p.price)}đ
                                     </div>
-                                    <Button
-                                      size="sm"
-                                      onClick={() => this.addToOrder(p)}
-                                    >
-                                      Add
-                                    </Button>
+                                    <div className="text-xs text-gray-500">
+                                      Đơn vị: {p.unit || "—"}
+                                    </div>
+                                    <div className="flex items-center justify-between w-full mt-1">
+                                      <div className="flex items-center text-yellow-500 text-xs">
+                                        <Star size={14} fill="currentColor" />{" "}
+                                        4.5
+                                      </div>
+                                      <Button
+                                        size="sm"
+                                        onClick={() => this.addToOrder(p)}
+                                      >
+                                        Add
+                                      </Button>
+                                    </div>
                                   </div>
                                 </CardContent>
                               </Card>
