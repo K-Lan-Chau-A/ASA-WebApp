@@ -190,10 +190,20 @@ class OrdersPageClass extends React.Component {
     if (cachedState) {
       try {
         const parsed = JSON.parse(cachedState);
-        this.setState({ ...parsed, shopId }, () => {
-          logApp("✅ Restored cached OrdersPage state");
-          this.refreshInBackground();
-        });
+        this.setState(
+          {
+            invoices: parsed.invoices || [{ id: 1, orders: [] }],
+            activeIdx: parsed.activeIdx || 0,
+            foundCustomer: parsed.foundCustomer || null,
+            customerSearch: parsed.customerSearch || "",
+            customerSuggestions: parsed.customerSuggestions || [],
+            shopId,
+          },
+          () => {
+            logApp("✅ Restored cached OrdersPage state");
+            this.refreshInBackground();
+          }
+        );
         return;
       } catch (e) {
         console.warn("⚠️ Lỗi khi parse cache:", e);
@@ -294,15 +304,18 @@ class OrdersPageClass extends React.Component {
   };
 
   componentDidUpdate(prevProps, prevState) {
-    if (
-      prevState.activeTab !== this.state.activeTab ||
-      prevState.categories !== this.state.categories
-    ) {
-      if (this.state.categories?.length) {
-        this.ensureProducts(this.state.activeTab);
-      }
+    if (prevState.invoices !== this.state.invoices) {
+      const cacheData = {
+        invoices: this.state.invoices,
+        activeIdx: this.state.activeIdx,
+        foundCustomer: this.state.foundCustomer,
+        customerSearch: this.state.customerSearch,
+        customerSuggestions: this.state.customerSuggestions,
+      };
+      localStorage.setItem("cachedOrdersPage", JSON.stringify(cacheData));
     }
   }
+
   markNotificationAsRead = async (id) => {
     const token = localStorage.getItem("accessToken");
     if (!token || !id) return;

@@ -254,7 +254,7 @@ class ProductPageClass extends React.Component {
             isLow: p.isLow ?? 0,
             status: p.status,
             createdAt: p.createdAt,
-            updatedAt: p.updatedAt,
+            updatedAt: p.updatedAt || p.updateAt || null,
             unitIdFk: p.unitIdFk,
             shopId: p.shopId,
             img: p.productImageURL || p.imageUrl || "/no-image.png",
@@ -292,26 +292,28 @@ class ProductPageClass extends React.Component {
     const p = this.state.selectedProduct;
     if (!p) return;
 
-    this.setState({
-      showDetailModal: false,
-      showEditModal: true,
-      // Gán dữ liệu vào form
-      productName: p.name || "",
-      barcode: p.barcode || "",
-      cost: p.cost || 0,
-      price: p.price || 0,
-      isLow: p.isLow || 0,
-      categoryId: p.categoryId || "",
-      quantity: p.stock || 0,
-      imageUrl: p.img || "",
-      units:
-        p.unitOptions?.map((u) => ({
-          id: u.productUnitId,
-          name: u.unitName,
-          conversion: u.conversionFactor,
-          price: u.price,
-          isBase: u.conversionFactor === 1,
-        })) || [],
+    this.setState({ showDetailModal: false }, () => {
+      setTimeout(() => {
+        this.setState({
+          showEditModal: true,
+          productName: p.name || "",
+          barcode: p.barcode || "",
+          cost: p.cost || 0,
+          price: p.price || 0,
+          isLow: p.isLow || 0,
+          categoryId: p.categoryId || "",
+          quantity: p.stock || 0,
+          imageUrl: p.img || "",
+          units:
+            p.unitOptions?.map((u) => ({
+              id: u.productUnitId,
+              name: u.unitName,
+              conversion: u.conversionFactor,
+              price: u.price,
+              isBase: u.conversionFactor === 1,
+            })) || [],
+        });
+      }, 100);
     });
   };
 
@@ -1098,7 +1100,7 @@ class ProductPageClass extends React.Component {
     const { units } = this.state;
 
     return (
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-50">
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex justify-center items-center z-[60]">
         <div className="bg-white w-[600px] rounded-2xl shadow-2xl p-8 relative">
           <button
             onClick={this.toggleUnitModal}
@@ -1302,13 +1304,33 @@ class ProductPageClass extends React.Component {
             <div>
               <p className="text-gray-500">Ngày tạo</p>
               <p className="font-semibold">
-                {new Date(selectedProduct.createdAt).toLocaleString("vi-VN")}
+                {new Date(selectedProduct.createdAt).toLocaleString("vi-VN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
               </p>
             </div>
             <div>
               <p className="text-gray-500">Cập nhật</p>
               <p className="font-semibold">
-                {new Date(selectedProduct.updatedAt).toLocaleString("vi-VN")}
+                {selectedProduct.updatedAt &&
+                !["0001-01-01T00:00:00", "null", "undefined", ""].includes(
+                  String(selectedProduct.updatedAt).trim()
+                )
+                  ? new Date(selectedProduct.updatedAt).toLocaleString(
+                      "vi-VN",
+                      {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      }
+                    )
+                  : "—"}
               </p>
             </div>
           </div>

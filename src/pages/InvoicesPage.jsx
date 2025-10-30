@@ -74,6 +74,9 @@ export default class InvoicesPage extends React.Component {
     this.setState({ shopId }, async () => {
       await this.loadShifts();
       await this.loadOrders();
+      await this.loadProducts();
+      await this.loadProductUnits();
+      await this.loadUsers();
     });
   };
 
@@ -158,11 +161,16 @@ export default class InvoicesPage extends React.Component {
         status: o.status === 1 ? "success" : "cancel",
         createdAt: o.createdAt || o.datetime,
         paymentMethod:
-          o.paymentMethod === "cash"
-            ? "Tiền mặt"
-            : o.paymentMethod === "bank_transfer"
-              ? "Chuyển khoản"
-              : o.paymentMethod || "Khác",
+          o.paymentMethod === "1" || o.paymentMethodId === 1
+            ? "💵 Tiền mặt"
+            : o.paymentMethod === "2" || o.paymentMethodId === 2
+              ? "🏦 Chuyển khoản"
+              : o.paymentMethod === "3" || o.paymentMethodId === 3
+                ? "📱 NFC"
+                : o.paymentMethod === "4" || o.paymentMethodId === 4
+                  ? "💳 Thẻ ATM"
+                  : "Phương thức khác",
+
         shiftId: o.shiftId || 0,
       }));
 
@@ -179,6 +187,99 @@ export default class InvoicesPage extends React.Component {
       this.setState({ error: `Lỗi tải hóa đơn: ${e.message}` });
     } finally {
       this.setState({ loading: false });
+    }
+  };
+  /* ---------- Load Products ---------- */
+  loadProducts = async () => {
+    const { shopId } = this.state;
+    const token = localStorage.getItem("accessToken");
+    if (!shopId || !token) return;
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/products?ShopId=${shopId}&page=1&pageSize=500`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : [];
+      const productMap = {};
+      items.forEach((p) => {
+        productMap[p.productId] = p.productName || `Sản phẩm #${p.productId}`;
+      });
+      this.productMap = productMap;
+    } catch (e) {
+      console.warn("⚠️ loadProducts:", e.message);
+    }
+  };
+  /* ---------- Load Product Units ---------- */
+  loadProductUnits = async () => {
+    const { shopId } = this.state;
+    const token = localStorage.getItem("accessToken");
+    if (!shopId || !token) return;
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/product-units?ShopId=${shopId}&page=1&pageSize=500`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : [];
+
+      const unitByUnitId = {};
+      const unitByProductUnitId = {};
+
+      items.forEach((u) => {
+        if (u.unitId)
+          unitByUnitId[u.unitId] = u.unitName || `Đơn vị #${u.unitId}`;
+        if (u.productUnitId)
+          unitByProductUnitId[u.productUnitId] =
+            u.unitName || `Đơn vị #${u.productUnitId}`;
+      });
+
+      this.unitByUnitId = unitByUnitId;
+      this.unitByProductUnitId = unitByProductUnitId;
+    } catch (e) {
+      console.warn("⚠️ loadProductUnits:", e.message);
+    }
+  };
+  /* ---------- Load Users ---------- */
+  loadUsers = async () => {
+    const { shopId } = this.state;
+    const token = localStorage.getItem("accessToken");
+    if (!shopId || !token) return;
+
+    try {
+      const res = await fetch(
+        `${API_URL}/api/users?ShopId=${shopId}&page=1&pageSize=500`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : [];
+
+      const userMap = {};
+      items.forEach((u) => {
+        userMap[u.userId] = {
+          name: u.fullName || u.username || `User #${u.userId}`,
+          avatar: u.avatar || "",
+        };
+      });
+      this.userMap = userMap;
+    } catch (e) {
+      console.warn("⚠️ loadUsers:", e.message);
     }
   };
 
@@ -200,10 +301,24 @@ export default class InvoicesPage extends React.Component {
           ? json.data.items
           : [];
 
-      return items.map((d) => ({
-        ...d,
-        productName: d.productName || `SP#${d.productId}`,
-      }));
+      return items.map((d) => {
+        const name =
+          d.productName?.trim() ||
+          this.productMap?.[d.productId] ||
+          `Sản phẩm #${d.productId}`;
+
+        const unitName =
+          d.unitName ||
+          this.unitByProductUnitId?.[d.productUnitId] ||
+          this.unitByUnitId?.[d.unitId] ||
+          "-";
+
+        return {
+          ...d,
+          productName: name,
+          unitName,
+        };
+      });
     } catch (e) {
       console.warn("⚠️ fetchOrderDetail:", e.message);
       return [];
@@ -230,9 +345,19 @@ export default class InvoicesPage extends React.Component {
           basePrice: d.basePrice,
           discountValue: d.discountAmount || 0,
           promotionValue: d.discountAmount || 0,
-          unit: d.unitName || "-",
+          unit:
+            d.unitName ||
+            this.unitByProductUnitId?.[d.productUnitId] ||
+            this.unitByUnitId?.[d.unitId] ||
+            "-",
         })),
       };
+      const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+      const currentUserId = profile?.userId;
+      const currentUser = this.userMap?.[currentUserId];
+      if (currentUser) {
+        orderFull.staff = currentUser.name;
+      }
 
       const html = await PrintTemplate.buildReceiptHTML(orderFull);
       const w = window.open("", "_blank");
@@ -372,8 +497,10 @@ export default class InvoicesPage extends React.Component {
                       {o.status === "success" ? "Thành công" : "Đã hủy"}
                     </span>
                   </div>
+                  <p className="text-sm text-gray-600 flex items-center gap-1">
+                    {o.paymentMethod}
+                  </p>
 
-                  <p className="text-sm text-gray-600">💳 {o.paymentMethod}</p>
                   <p className="text-lg font-bold text-[#007E85] mt-2">
                     {fmtMoney(o.total)}
                   </p>
@@ -440,9 +567,12 @@ export default class InvoicesPage extends React.Component {
                         </p>
                       </div>
                       <div className="text-right text-sm text-gray-700">
-                        <div>Giá: {fmtMoney(it.basePrice)}</div>
-                        <div className="font-semibold text-[#007E85]">
-                          {fmtMoney(it.finalPrice)}
+                        <div className="text-right text-sm text-gray-700">
+                          <div>Giá: {fmtMoney(it.basePrice)}</div>
+                          <div>Đơn vị: {it.unitName || "-"}</div>
+                          <div className="font-semibold text-[#007E85]">
+                            {fmtMoney(it.finalPrice)}
+                          </div>
                         </div>
                       </div>
                     </div>

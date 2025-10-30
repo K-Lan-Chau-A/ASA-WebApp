@@ -115,42 +115,41 @@ class CategoryPageClass extends React.Component {
     }
   };
 
-fetchProductCounts = async () => {
-  const { shopId } = this.state;
-  if (!shopId) return;
-  const token = localStorage.getItem("accessToken");
+  fetchProductCounts = async () => {
+    const { shopId } = this.state;
+    if (!shopId) return;
+    const token = localStorage.getItem("accessToken");
 
-  try {
-    const url = `${API_URL}/api/products?ShopId=${shopId}&page=1&pageSize=5000`;
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      mode: "cors",
-    });
-    const data = await this.safeParse(res);
-    if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+    try {
+      const url = `${API_URL}/api/products?ShopId=${shopId}&page=1&pageSize=5000`;
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        mode: "cors",
+      });
+      const data = await this.safeParse(res);
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
-    const items = Array.isArray(data.items) ? data.items : [];
+      const items = Array.isArray(data.items) ? data.items : [];
 
-    const filtered = items.filter(
-      (p) => Number(p.shopId) === Number(shopId) && Number(p.status) === 1
-    );
+      const filtered = items.filter(
+        (p) => Number(p.shopId) === Number(shopId) && Number(p.status) === 1
+      );
 
-    const counts = {};
-    filtered.forEach((p) => {
-      const cid = Number(p.categoryId) || 0;
-      if (!counts[cid]) counts[cid] = 0;
-      counts[cid]++;
-    });
+      const counts = {};
+      filtered.forEach((p) => {
+        const cid = Number(p.categoryId) || 0;
+        if (!counts[cid]) counts[cid] = 0;
+        counts[cid]++;
+      });
 
-    this.setState({ productCounts: counts });
-  } catch (e) {
-    console.error("fetchProductCounts error:", e);
-  }
-};
-
+      this.setState({ productCounts: counts });
+    } catch (e) {
+      console.error("fetchProductCounts error:", e);
+    }
+  };
 
   fetchProductsByCategory = async (cat) => {
     const { shopId } = this.state;
@@ -250,7 +249,10 @@ fetchProductCounts = async () => {
   getFiltered = () => {
     const { search, categories } = this.state;
     if (!search.trim()) return categories;
-    const q = search.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const q = search
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
     return categories.filter((c) =>
       c.categoryName.toLowerCase().normalize("NFD").includes(q)
     );
@@ -273,7 +275,9 @@ fetchProductCounts = async () => {
     } = this.state;
 
     const filtered = this.getFiltered();
-    const products = currentCategory ? productsByCat[currentCategory.categoryId] || [] : [];
+    const products = currentCategory
+      ? productsByCat[currentCategory.categoryId] || []
+      : [];
 
     return (
       <div className="flex h-screen w-screen overflow-hidden">
@@ -351,8 +355,9 @@ fetchProductCounts = async () => {
                       </Button>
                     </div>
                   </div>
-                  <p className="text-sm text-gray-500">ID: {cat.categoryId}</p>
-                  <p className="text-sm text-black-500">{productCounts[cat.categoryId]} sản phẩm</p>
+                  <p className="text-sm text-black-500">
+                    {productCounts[cat.categoryId]} sản phẩm
+                  </p>
                 </Card>
               ))}
             </div>
@@ -409,7 +414,10 @@ fetchProductCounts = async () => {
               <div className="bg-white w-[800px] max-h-[80vh] rounded-2xl shadow-2xl p-6 overflow-y-auto relative">
                 <button
                   onClick={() =>
-                    this.setState({ showProductsModal: false, currentCategory: null })
+                    this.setState({
+                      showProductsModal: false,
+                      currentCategory: null,
+                    })
                   }
                   className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
                 >
@@ -430,11 +438,15 @@ fetchProductCounts = async () => {
                       <Card key={p.productId} className="p-4 border rounded-xl">
                         <div className="flex gap-4">
                           <img
-                            src={p.productImageURL || "https://via.placeholder.com/100"}
+                            src={
+                              p.productImageURL ||
+                              "https://via.placeholder.com/100"
+                            }
                             alt={p.productName}
                             className="w-20 h-20 object-cover rounded-lg"
                             onError={(e) =>
-                              (e.currentTarget.src = "https://via.placeholder.com/100")
+                              (e.currentTarget.src =
+                                "https://via.placeholder.com/100")
                             }
                           />
                           <div className="flex-1">
@@ -449,7 +461,13 @@ fetchProductCounts = async () => {
                             </p>
                             <p className="text-xs text-gray-400">
                               Trạng thái:{" "}
-                              <span className={p.status === 1 ? "text-green-500" : "text-red-500"}>
+                              <span
+                                className={
+                                  p.status === 1
+                                    ? "text-green-500"
+                                    : "text-red-500"
+                                }
+                              >
                                 {p.status === 1 ? "Đang bán" : "Ngừng bán"}
                               </span>
                             </p>

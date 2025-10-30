@@ -43,6 +43,43 @@ export default class PrintTemplate {
       return { name: "Cửa hàng của bạn", address: "Chưa có địa chỉ" };
     }
   }
+  /* ---------- Lấy thông tin nhân viên hiện đang đăng nhập ---------- */
+  static async getCashierName() {
+    try {
+      const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+      const token = localStorage.getItem("accessToken");
+      if (!profile?.userId || !profile?.shopId || !token)
+        throw new Error("Thiếu userId hoặc shopId.");
+
+      const cached = localStorage.getItem("cashierInfo");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.userId === profile.userId) return parsed.fullName;
+      }
+
+      const res = await fetch(
+        `${API_URL}/api/users?ShopId=${profile.shopId}&page=1&pageSize=100`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const data = await res.json();
+      const list = Array.isArray(data.items) ? data.items : [];
+      const current = list.find((u) => u.userId === profile.userId);
+      const fullName =
+        current?.fullName || current?.username || `User #${profile.userId}`;
+
+      localStorage.setItem(
+        "cashierInfo",
+        JSON.stringify({ userId: profile.userId, fullName })
+      );
+
+      return fullName;
+    } catch (e) {
+      console.warn("[PrintTemplate] ⚠️ getCashierName:", e.message);
+      return "Nhân viên";
+    }
+  }
+
   static async getCustomerInfo(customerId) {
     if (!customerId) return null;
     const token = localStorage.getItem("accessToken");
@@ -224,6 +261,8 @@ export default class PrintTemplate {
         order.customerAddress = customer.address;
       }
     }
+    const cashierName = await PrintTemplate.getCashierName();
+    order.cashierName = cashierName;
 
     if (!shop) shop = await this.getShopInfo();
     const fmt = new Intl.NumberFormat("vi-VN", {
@@ -440,7 +479,7 @@ export default class PrintTemplate {
 
   <div class="line"></div>
   <div class="center">
-    <div>Thu ngân: ${order.cashierName || "NV001"}</div>
+    <div>Thu ngân: ${order.cashierName || order.staffName || "NV001"}</div>
     <p><b>CẢM ƠN QUÝ KHÁCH!</b></p>
     <p>Powered by ASA POS</p>
   </div>
