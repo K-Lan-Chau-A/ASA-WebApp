@@ -58,7 +58,8 @@ class PromotionPage extends React.Component {
     const shopId = (await getShopId()) ?? 0;
 
     if (!form.name.trim()) return alert("Vui lòng nhập tên khuyến mãi");
-    if (!form.startDate || !form.endDate) return alert("Vui lòng nhập thời gian");
+    if (!form.startDate || !form.endDate)
+      return alert("Vui lòng nhập thời gian");
 
     const payload = {
       shopId,
@@ -82,7 +83,10 @@ class PromotionPage extends React.Component {
       });
       if (!res.ok) throw new Error();
       alert("✅ Tạo khuyến mãi thành công!");
-      this.setState({ showAddModal: false, form: { name: "", startDate: "", endDate: "", type: 1, value: "" } });
+      this.setState({
+        showAddModal: false,
+        form: { name: "", startDate: "", endDate: "", type: 1, value: "" },
+      });
       this.loadPromotions();
     } catch {
       alert("❌ Lỗi khi tạo khuyến mãi");
@@ -108,19 +112,22 @@ class PromotionPage extends React.Component {
     if (!editing) return;
     const token = this.getToken();
     try {
-      const res = await fetch(`${API_URL}/api/promotions/${editing.promotionId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          ...form,
-          shopId: await getShopId(),
-          value: parseFloat(form.value),
-          productIds: this.state.selectedProducts,
-        }),
-      });
+      const res = await fetch(
+        `${API_URL}/api/promotions/${editing.promotionId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            ...form,
+            shopId: await getShopId(),
+            value: parseFloat(form.value),
+            productIds: this.state.selectedProducts,
+          }),
+        }
+      );
       if (!res.ok) throw new Error();
       alert("✅ Cập nhật thành công!");
       this.setState({ showEditModal: false, editing: null });
@@ -149,7 +156,7 @@ class PromotionPage extends React.Component {
   /* ---------- UI ---------- */
   renderModal(isEdit = false) {
     const { form } = this.state;
-    const title = isEdit ? "✏️ Chỉnh sửa khuyến mãi" : "🎁 Tạo khuyến mãi mới";
+    const title = isEdit ? "✏️ Chỉnh sửa khuyến mãi" : " Tạo khuyến mãi mới";
     const onSubmit = isEdit ? this.handleUpdate : this.handleCreate;
 
     return (
@@ -163,14 +170,18 @@ class PromotionPage extends React.Component {
           >
             ✕
           </button>
-          <h2 className="text-2xl font-extrabold text-[#007E85] mb-6">{title}</h2>
+          <h2 className="text-2xl font-extrabold text-[#007E85] mb-6">
+            {title}
+          </h2>
 
           <div className="space-y-4">
             <div>
               <label className="font-semibold">Tên chương trình *</label>
               <Input
                 value={form.name}
-                onChange={(e) => this.setState({ form: { ...form, name: e.target.value } })}
+                onChange={(e) =>
+                  this.setState({ form: { ...form, name: e.target.value } })
+                }
                 placeholder="VD: Giảm giá mùa hè"
               />
             </div>
@@ -181,7 +192,9 @@ class PromotionPage extends React.Component {
                   type="date"
                   value={form.startDate}
                   onChange={(e) =>
-                    this.setState({ form: { ...form, startDate: e.target.value } })
+                    this.setState({
+                      form: { ...form, startDate: e.target.value },
+                    })
                   }
                 />
               </div>
@@ -191,7 +204,9 @@ class PromotionPage extends React.Component {
                   type="date"
                   value={form.endDate}
                   onChange={(e) =>
-                    this.setState({ form: { ...form, endDate: e.target.value } })
+                    this.setState({
+                      form: { ...form, endDate: e.target.value },
+                    })
                   }
                 />
               </div>
@@ -203,7 +218,9 @@ class PromotionPage extends React.Component {
                   className="border rounded-lg w-full h-11 px-3"
                   value={form.type}
                   onChange={(e) =>
-                    this.setState({ form: { ...form, type: Number(e.target.value) } })
+                    this.setState({
+                      form: { ...form, type: Number(e.target.value) },
+                    })
                   }
                 >
                   <option value={1}>Giảm số tiền</option>
@@ -244,7 +261,8 @@ class PromotionPage extends React.Component {
   }
 
   render() {
-    const { promotions, loading, search, showAddModal, showEditModal } = this.state;
+    const { promotions, loading, search, showAddModal, showEditModal } =
+      this.state;
     const filtered = promotions.filter((p) =>
       p.name.toLowerCase().includes(search.toLowerCase())
     );
@@ -255,7 +273,10 @@ class PromotionPage extends React.Component {
         <div className="flex-1 bg-gradient-to-r from-[#EAFDFC] via-[#F7E7CE] to-[#E0F7FA] p-10 overflow-y-auto">
           {/* Header */}
           <div className="flex justify-between items-center mb-8">
-            <h1 className="text-3xl font-extrabold text-[#007E85]">🎁 KHUYẾN MÃI</h1>
+            <h1 className="text-3xl font-extrabold text-[#007E85]">
+              {" "}
+              KHUYẾN MÃI
+            </h1>
             <div className="flex items-center space-x-3">
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
@@ -283,7 +304,10 @@ class PromotionPage extends React.Component {
           ) : (
             <div className="grid gap-4">
               {filtered.map((p) => (
-                <Card key={p.promotionId} className="p-5 flex justify-between items-center">
+                <Card
+                  key={p.promotionId}
+                  className="p-5 flex justify-between items-center"
+                >
                   <div>
                     <p className="font-bold text-lg text-gray-800">{p.name}</p>
                     <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
@@ -293,12 +317,22 @@ class PromotionPage extends React.Component {
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="px-3 py-1 bg-[#00A8B0]/10 text-[#00A8B0] rounded-full text-sm font-semibold">
-                      {p.type === 2 ? `${p.value}%` : `${p.value.toLocaleString("vi-VN")}₫`}
+                      {p.type === 2
+                        ? `${p.value}%`
+                        : `${p.value.toLocaleString("vi-VN")}₫`}
                     </div>
-                    <Button size="icon" variant="ghost" onClick={() => this.handleEdit(p)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => this.handleEdit(p)}
+                    >
                       <Pencil className="w-5 h-5 text-[#00A8B0]" />
                     </Button>
-                    <Button size="icon" variant="ghost" onClick={() => this.handleDelete(p.promotionId)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => this.handleDelete(p.promotionId)}
+                    >
                       <Trash2 className="w-5 h-5 text-red-500" />
                     </Button>
                   </div>

@@ -619,7 +619,6 @@ class PaymentPageClass extends React.Component {
         this.state.customerId ??
         null,
       paymentMethod,
-      // MẶC ĐỊNH 0 – chỉ khi back mới ép 2; khi cash submit mới set 1
       status: overrides.status ?? head?.status ?? last?.status ?? 0,
       shiftId:
         overrides.shiftId ?? shiftId ?? head?.shiftId ?? last?.shiftId ?? null,
@@ -672,7 +671,7 @@ class PaymentPageClass extends React.Component {
     let orderId = Number(orderIdArg || oidFromState || 0);
     if (!orderId) {
       log("PUT status=2: chưa có orderId → chờ waitForOrderId(5000)...");
-      orderId = await this.waitForOrderId(5000); // tăng timeout để chắc id có
+      orderId = await this.waitForOrderId(1000); // tăng timeout để chắc id có
     }
     if (!orderId) {
       warn("PUT status=2: không có orderId, bỏ qua.");
@@ -1100,15 +1099,16 @@ class PaymentPageClass extends React.Component {
     return Math.max(0, this.totalAfter - this.effectiveReceived);
   }
   get discountSum() {
-    return (
-      (this.state.voucherDiscount || 0) + (this.state.manualDiscountValue || 0)
-    );
+    const voucherDiscount = Number(this.state.voucherDiscount || 0);
+    const manualDiscount = Number(this.state.manualDiscountValue || 0);
+    return voucherDiscount + manualDiscount;
   }
   get totalBefore() {
     return this.subtotal();
   }
   get totalAfter() {
-    return Math.max(0, this.totalBefore - this.discountSum);
+    const after = Math.max(0, this.totalBefore - this.discountSum);
+    return after;
   }
   /* ---------- Render parts ---------- */
   SectionHeader() {
@@ -1300,7 +1300,7 @@ class PaymentPageClass extends React.Component {
           <div className="flex flex-col gap-1 mt-3">
             <div className="flex items-center justify-between text-sm text-gray-600">
               <span>Tổng trước giảm</span>
-              <span>{fmt.format(this.totalAfter)}đ</span>
+              <span>{fmt.format(this.totalBefore)}đ</span>
             </div>
 
             {(this.state.voucherDiscount > 0 ||

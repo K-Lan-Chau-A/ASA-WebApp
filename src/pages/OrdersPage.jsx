@@ -1463,10 +1463,10 @@ class OrdersPageClass extends React.Component {
                                     {p.hasPromo ? (
                                       <>
                                         <span className="text-gray-400 text-sm line-through">
-                                          {fmt.format(p.price)}đ
+                                          {fmt.format(p.basePrice)}đ
                                         </span>
                                         <span className="text-orange-500 font-bold">
-                                          {fmt.format(p.promoPrice)}đ
+                                          {fmt.format(p.price)}đ
                                         </span>
                                       </>
                                     ) : (
@@ -1704,7 +1704,7 @@ class OrdersPageClass extends React.Component {
                   <div className="relative flex-1 min-w-[200px]">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                     <Input
-                      placeholder="Nhập SĐT khác"
+                      placeholder="Nhập SĐT khách"
                       className="h-9 w-full rounded-full pl-9 pr-4 border border-gray-300 focus:border-[#00A8B0] focus-visible:ring-0 text-sm shadow-none"
                       value={this.state.customerSearch}
                       onChange={(e) => {
@@ -1903,12 +1903,6 @@ class OrdersPageClass extends React.Component {
                   <span className="font-bold">{fmt.format(total)} VND</span>
                 </div>
                 <div className="pt-3 flex items-center gap-4">
-                  <Button
-                    variant="outline"
-                    className="rounded-xl border-[#00A8B0] text-[#00A8B0] w-[220px]"
-                  >
-                    Thông báo
-                  </Button>
                   <Button
                     className="rounded-xl bg-[#00A8B0] flex-1"
                     disabled={

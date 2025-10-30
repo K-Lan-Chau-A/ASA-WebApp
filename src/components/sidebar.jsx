@@ -10,6 +10,7 @@ import {
   Medal,
   Tag,
   UserCog,
+  FileText,
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -21,7 +22,7 @@ export default function Sidebar() {
     { icon: BarChart2, label: "Dashboard", path: "/dashboard" },
     { icon: Folder, label: "Danh mục", path: "/categories" },
     { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
-    { icon: ShoppingBag, label: "Hóa đơn", path: "/invoices" },
+    { icon: FileText, label: "Hóa đơn", path: "/invoices" },
     { icon: Users, label: "Khách hàng", path: "/customers" },
     { icon: Gift, label: "Voucher", path: "/vouchers" },
     { icon: Medal, label: "Rank", path: "/ranks" },

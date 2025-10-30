@@ -1,12 +1,25 @@
 import React from "react";
 import {
-  PieChart, Pie, Cell, ResponsiveContainer,
-  LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
 } from "recharts";
 import { Card } from "@/components/ui/card";
 import Sidebar from "@/components/sidebar";
 import {
-  ChartBar, Wallet, Receipt, Power, UserCircle2, CircleDot
+  ChartBar,
+  Wallet,
+  Receipt,
+  Power,
+  UserCircle2,
+  CircleDot,
 } from "lucide-react";
 import API_URL from "@/config/api";
 import { printCloseShift } from "@/lib/CloseShiftTemplate";
@@ -18,6 +31,7 @@ class DashboardPage extends React.Component {
     stats: null,
     todayRevenue: 0,
     todayInvoices: 0,
+    totalProfit: 0,
     topProducts: [],
     topCategories: [],
     revenueData: [],
@@ -25,19 +39,20 @@ class DashboardPage extends React.Component {
     shiftId: 0,
     openedAt: null,
     closing: false,
-    shiftStatus: 0, // 0: Chưa mở ca, 1: Đang mở ca, 2: Đã đóng ca
+    shiftStatus: 0, // 0=chưa mở, 1=đang mở, 2=đã đóng
   };
 
   async componentDidMount() {
     this.loadUser();
-    await this.loadStats();
-    await this.loadShiftStatus();
+    await Promise.all([this.loadStats(), this.loadShiftStatus()]);
   }
 
-  /*lOAD USER INFO */
+  /* 🧩 Load user info từ localStorage */
   loadUser() {
     const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
-    const currentShift = JSON.parse(localStorage.getItem("currentShift") || "{}");
+    const currentShift = JSON.parse(
+      localStorage.getItem("currentShift") || "{}"
+    );
 
     this.setState({
       user: {
@@ -49,66 +64,135 @@ class DashboardPage extends React.Component {
       openedAt: currentShift.openedAt || null,
     });
   }
-  /* 🔍 CHECK SHIFT STATUS */
+
+  safeParse = async (res) => {
+    try {
+      return await res.json();
+    } catch {
+      const txt = await res.text().catch(() => "");
+      try {
+        return JSON.parse(txt);
+      } catch {
+        return { raw: txt };
+      }
+    }
+  };
+
   async loadShiftStatus() {
     try {
       const token = localStorage.getItem("accessToken");
       const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
-      const shopId = profile?.shopId ?? 0;
-      const { shiftId } = this.state;
+      const shopId = Number(profile?.shopId || 0);
+      let { shiftId } = this.state;
 
-      if (!token || !shopId || !shiftId) {
-        this.setState({ shiftStatus: 0 });
+      if (!token || !shopId) {
+        this.setState({ shiftStatus: 0, todayRevenue: 0, todayInvoices: 0 });
         return;
       }
 
-      const res = await fetch(
-        `${API_URL}/api/shifts?shopId=${shopId}&page=1&pageSize=10`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      const res = await fetch(`${API_URL}/api/shifts?ShopId=${shopId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json)
+              ? json
+              : [];
 
-      const data = await res.json().catch(() => null);
-      const current = data?.items?.find((s) => s.shiftId === shiftId);
+      const active = items.find((s) => Number(s.status) === 1);
+      if (!shiftId && active?.shiftId) shiftId = active.shiftId;
 
-      this.setState({ shiftStatus: current ? current.status : 0 });
-    } catch {
-      this.setState({ shiftStatus: 0 });
+      const current = items.find((s) => Number(s.shiftId) === Number(shiftId));
+      const status = Number(current?.status ?? 0);
+
+      this.setState({ shiftId: Number(shiftId || 0), shiftStatus: status });
+
+      if (shiftId) await this.loadShiftOrders(shopId, shiftId, token);
+      else this.setState({ todayRevenue: 0, todayInvoices: 0 });
+    } catch (err) {
+      console.warn("⚠️ loadShiftStatus error:", err);
+      this.setState({ shiftStatus: 0, todayRevenue: 0, todayInvoices: 0 });
     }
   }
 
-  /*  LOAD DASHBOARD DATA */
+  async loadShiftOrders(shopId, shiftId, token) {
+    try {
+      const res = await fetch(
+        `${API_URL}/api/orders?ShopId=${shopId}&ShiftId=${shiftId}&page=1&pageSize=200`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json)
+              ? json
+              : [];
+
+      const successful = items.filter((o) => Number(o?.status ?? 0) === 1);
+
+      const totalRevenue = successful.reduce(
+        (sum, o) => sum + Number(o?.finalPrice ?? o?.totalPrice ?? 0),
+        0
+      );
+      const totalInvoices = successful.length;
+
+      this.setState({
+        todayInvoices: totalInvoices,
+        todayRevenue: totalRevenue,
+      });
+    } catch (err) {
+      console.warn("⚠️ loadShiftOrders error:", err);
+      this.setState({ todayInvoices: 0, todayRevenue: 0 });
+    }
+  }
+
   async loadStats() {
     try {
       this.setState({ loading: true });
 
       const token = localStorage.getItem("accessToken");
       const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
-      const shopId = profile?.shopId ?? 0;
-
+      const shopId = Number(profile?.shopId || 0);
       if (!token || !shopId) return;
 
-      const res = await fetch(`${API_URL}/api/reports/statistics-overview?shopId=${shopId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        `${API_URL}/api/reports/statistics-overview?shopId=${shopId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await this.safeParse(res);
+      if (!data) return;
 
-      const data = await res.json().catch(() => null);
-      const daily = data?.revenueStats?.dailyRevenues || [];
-      const topProducts = data?.topProducts || [];
-      const topCategories = data?.topCategories || [];
-
-      const today = daily.at(-1);
-      const todayRevenue = today?.revenue || 0;
-      const todayInvoices = data?.totalInvoices ?? 0;
+      const daily = Array.isArray(data?.revenueStats?.dailyRevenues)
+        ? data.revenueStats.dailyRevenues
+        : [];
+      const topProducts = Array.isArray(data?.topProducts)
+        ? data.topProducts
+        : [];
+      const topCategories = Array.isArray(data?.topCategories)
+        ? data.topCategories
+        : [];
+      const totalProfit = Number(data?.revenueStats?.totalProfit ?? 0);
 
       const revenueData = daily.map((d) => ({
-        day: new Date(d.date).toLocaleDateString("vi-VN", { weekday: "short" }),
+        day: new Date(d.date).toLocaleDateString("vi-VN", {
+          day: "2-digit",
+          month: "2-digit",
+        }),
         value: Number(d.revenue || 0),
       }));
 
       this.setState({
         stats: data,
-        todayRevenue,
-        todayInvoices,
+        totalProfit,
         topProducts,
         topCategories,
         revenueData,
@@ -118,7 +202,12 @@ class DashboardPage extends React.Component {
     }
   }
 
-  /* 🧾 ĐÓNG CA LÀM VIỆC */
+  async componentDidMount() {
+    this.loadUser();
+    await this.loadShiftStatus();
+    await this.loadStats();
+  }
+
   handleCloseShift = async () => {
     const {
       shiftId,
@@ -131,13 +220,12 @@ class DashboardPage extends React.Component {
       shiftStatus,
     } = this.state;
 
-    if (!shiftId || shiftId === 0) {
+    if (!shiftId) {
       alert("❌ Không tìm thấy ShiftId hợp lệ để đóng ca!");
       return;
     }
 
     if (shiftStatus === 2) {
-      // 🔄 Nếu ca đã đóng → chuyển hướng sang mở ca
       this.props.navigate("/open-shift");
       return;
     }
@@ -155,7 +243,7 @@ class DashboardPage extends React.Component {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ shiftId: Number(shiftId) }),
+        body: JSON.stringify({ shiftId }),
       });
 
       const data = await res.json().catch(() => null);
@@ -164,7 +252,9 @@ class DashboardPage extends React.Component {
         alert("✅ Đã đóng ca thành công!");
         this.setState({ shiftStatus: 2 });
 
-        const currentShift = JSON.parse(localStorage.getItem("currentShift") || "{}");
+        const currentShift = JSON.parse(
+          localStorage.getItem("currentShift") || "{}"
+        );
         localStorage.setItem(
           "currentShift",
           JSON.stringify({
@@ -196,10 +286,11 @@ class DashboardPage extends React.Component {
   };
 
   render() {
-    const COLORS = ["#00A8B0", "#FF914D", "#CCCCCC"];
+    const COLORS = ["#00A8B0", "#FF914D", "#FFCD56", "#4BC0C0", "#9966FF"];
     const {
       todayRevenue,
       todayInvoices,
+      totalProfit,
       topProducts,
       topCategories,
       revenueData,
@@ -210,12 +301,12 @@ class DashboardPage extends React.Component {
       loading,
     } = this.state;
 
-    const hasData =
-      topProducts.length > 0 ||
-      topCategories.length > 0 ||
-      (todayRevenue && todayInvoices);
-
     const isClosed = shiftStatus === 2;
+    const hasData =
+      todayRevenue > 0 ||
+      todayInvoices > 0 ||
+      topProducts.length > 0 ||
+      topCategories.length > 0;
 
     return (
       <div className="flex h-screen w-full overflow-hidden bg-gradient-to-br from-[#EAFDFC] to-[#F7E7CE]">
@@ -226,11 +317,19 @@ class DashboardPage extends React.Component {
             <div className="flex items-center gap-3">
               <UserCircle2 className="w-10 h-10 text-[#00A8B0]" />
               <div>
-                <h2 className="text-lg font-semibold text-[#007E85]">{user?.fullName}</h2>
-                <p className="text-sm text-gray-500">{user?.shopName} • {user?.username}</p>
+                <h2 className="text-lg font-semibold text-[#007E85]">
+                  {user?.fullName}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {user?.shopName} • {user?.username}
+                </p>
                 <div className="flex items-center gap-2 mt-1">
-                  <CircleDot className={`w-3 h-3 ${isClosed ? "text-red-500" : "text-green-500"}`} />
-                  <span className={`text-sm font-medium ${isClosed ? "text-red-600" : "text-green-700"}`}>
+                  <CircleDot
+                    className={`w-3 h-3 ${isClosed ? "text-red-500" : "text-green-500"}`}
+                  />
+                  <span
+                    className={`text-sm font-medium ${isClosed ? "text-red-600" : "text-green-700"}`}
+                  >
                     {isClosed
                       ? "Ca đã đóng"
                       : `Ca đang mở ${openedAt ? `(Bắt đầu: ${new Date(openedAt).toLocaleTimeString("vi-VN")})` : ""}`}
@@ -239,7 +338,7 @@ class DashboardPage extends React.Component {
               </div>
             </div>
 
-            {/* 🔘 Nút Đóng/Mở ca */}
+            {/* Nút đóng/mở ca */}
             <button
               onClick={this.handleCloseShift}
               disabled={closing}
@@ -247,70 +346,118 @@ class DashboardPage extends React.Component {
                 closing
                   ? "bg-gray-400 cursor-not-allowed"
                   : isClosed
-                  ? "bg-[#00A8B0] hover:bg-[#008f8a]" // nút mở ca
-                  : "bg-[#FF6D60] hover:bg-[#ff4c3f]" // nút đóng ca
+                    ? "bg-[#00A8B0] hover:bg-[#008f8a]" // nút mở ca
+                    : "bg-[#FF6D60] hover:bg-[#ff4c3f]" // nút đóng ca
               }`}
             >
               <Power className="w-5 h-5" />
-              {closing
-                ? "Đang xử lý..."
-                : isClosed
-                ? "Mở ca"
-                : "Đóng ca"}
+              {closing ? "Đang xử lý..." : isClosed ? "Mở ca" : "Đóng ca"}
             </button>
           </div>
 
-          {/* Title */}
           <h1 className="text-3xl font-extrabold text-[#007E85] mb-8 uppercase tracking-wide">
             Báo cáo doanh thu
           </h1>
 
           {loading ? (
-            <p className="text-center text-gray-500 text-lg mt-10">Đang tải dữ liệu...</p>
+            <p className="text-center text-gray-500 text-lg mt-10">
+              Đang tải dữ liệu...
+            </p>
           ) : !hasData ? (
             <p className="text-center text-gray-500 text-lg mt-20">
               ⏳ Chưa có dữ liệu thống kê trong ngày hôm nay.
             </p>
           ) : (
             <>
-              {/* TOP SECTION */}
+              {/* Tổng quan */}
               <div className="grid grid-cols-3 gap-6">
-                {/* Tổng doanh thu */}
+                {/* PieChart doanh thu theo danh mục */}
                 <Card className="col-span-1 p-6 bg-white shadow-md rounded-2xl">
-                  <h2 className="text-lg font-semibold mb-4 text-gray-700">Tổng doanh thu</h2>
-                  <div className="flex justify-center items-center h-[200px]">
+                  <h2 className="text-lg font-semibold mb-4 text-gray-700">
+                    Tổng doanh thu
+                  </h2>
+                  <div className="flex justify-center items-center h-[220px] relative">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={topCategories.map((c) => ({
-                            name: c.categoryName || "Khác",
-                            value: c.totalRevenue || 0,
-                          }))}
+                          data={
+                            topCategories.length > 0
+                              ? topCategories.map((c) => ({
+                                  name: c.categoryName || "Khác",
+                                  value: Number(c.totalRevenue) || 0,
+                                }))
+                              : [
+                                  { name: "Không có dữ liệu", value: 1 },
+                                  { name: "Chờ cập nhật", value: 1 },
+                                ]
+                          }
                           dataKey="value"
                           nameKey="name"
-                          outerRadius={80}
-                          innerRadius={50}
+                          outerRadius={85}
+                          innerRadius={55}
                           paddingAngle={3}
+                          labelLine={false}
+                          label={false}
                         >
-                          {topCategories.map((_, index) => (
-                            <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                          {(topCategories.length > 0
+                            ? topCategories
+                            : [1, 2]
+                          ).map((_, i) => (
+                            <Cell key={i} fill={COLORS[i % COLORS.length]} />
                           ))}
                         </Pie>
+
+                        <Tooltip
+                          formatter={(v) => `${v.toLocaleString("vi-VN")} ₫`}
+                          contentStyle={{
+                            background: "white",
+                            border: "1px solid #ddd",
+                            borderRadius: "8px",
+                          }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
+
+                    {/* 🔹 Tổng doanh thu giữa chart */}
+                    <div className="absolute text-center">
+                      <p className="text-sm text-gray-500">Tổng cộng</p>
+                      <p className="text-lg font-bold text-[#00A8B0]">
+                        {todayRevenue > 0
+                          ? `${(todayRevenue / 1_000_000).toFixed(1)}M VND`
+                          : "0 VND"}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-center text-xl font-bold text-[#00A8B0] mt-1">
-                    {todayRevenue ? `${(todayRevenue / 1000000).toFixed(1)}M VND` : "0 VND"}
-                  </p>
+
+                  {/* 🔹 Chú thích dưới biểu đồ */}
+                  <div className="flex justify-center gap-4 mt-2 flex-wrap text-sm text-gray-600">
+                    {(topCategories.length > 0
+                      ? topCategories
+                      : [
+                          {
+                            categoryName: "Không có dữ liệu",
+                            color: COLORS[0],
+                          },
+                          { categoryName: "Chờ cập nhật", color: COLORS[1] },
+                        ]
+                    ).map((c, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                        ></span>
+                        <span>{c.categoryName || c.name}</span>
+                      </div>
+                    ))}
+                  </div>
                 </Card>
 
-                {/* Tổng giao dịch */}
+                {/* Tổng giao dịch + hàng bán + lợi nhuận */}
                 <Card className="col-span-2 p-6 bg-white shadow-md rounded-2xl flex flex-col justify-between">
                   <div className="flex justify-between items-start">
                     <div>
                       <div className="flex items-center gap-2 text-[#FF914D] font-semibold">
-                        <Receipt className="w-5 h-5" />
-                        Tổng giao dịch
+                        <Receipt className="w-5 h-5" /> Tổng giao dịch
                       </div>
                       <p className="text-3xl font-bold mt-1">
                         {todayInvoices.toLocaleString("vi-VN")}
@@ -318,8 +465,7 @@ class DashboardPage extends React.Component {
                     </div>
                     <div>
                       <div className="flex items-center gap-2 text-[#00A8B0] font-semibold">
-                        <ChartBar className="w-5 h-5" />
-                        Tổng hàng bán ra
+                        <ChartBar className="w-5 h-5" /> Tổng hàng bán
                       </div>
                       <p className="text-2xl font-bold text-[#007E85] mt-1">
                         {topProducts
@@ -329,28 +475,31 @@ class DashboardPage extends React.Component {
                     </div>
                     <div>
                       <div className="flex items-center gap-2 text-[#FF914D] font-semibold">
-                        <Wallet className="w-5 h-5" />
-                        Chi tiêu
+                        <Wallet className="w-5 h-5" /> Lợi nhuận
                       </div>
                       <p className="text-2xl font-bold text-[#FF914D] mt-1">
-                        {(todayRevenue * 0.7).toLocaleString("vi-VN")}
+                        {totalProfit.toLocaleString("vi-VN")} ₫
                       </p>
                     </div>
                   </div>
                 </Card>
               </div>
 
-              {/* BOTTOM SECTION */}
+              {/* Chi tiết */}
               <div className="grid grid-cols-3 gap-6 mt-8">
-                {/* Biểu đồ */}
+                {/* Biểu đồ tuyến */}
                 <Card className="col-span-2 p-6 bg-white shadow-md rounded-2xl">
-                  <h2 className="text-lg font-semibold mb-4 text-gray-700">Doanh thu hằng ngày</h2>
+                  <h2 className="text-lg font-semibold mb-4 text-gray-700">
+                    Doanh thu hằng ngày
+                  </h2>
                   <ResponsiveContainer width="100%" height={250}>
                     <LineChart data={revenueData}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="day" />
-                      <YAxis tickFormatter={(v) => `${v / 1000000}M`} />
-                      <Tooltip formatter={(v) => `${v.toLocaleString()} VND`} />
+                      <YAxis
+                        tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`}
+                      />
+                      <Tooltip formatter={(v) => `${v.toLocaleString()} ₫`} />
                       <Line
                         type="monotone"
                         dataKey="value"
@@ -362,23 +511,25 @@ class DashboardPage extends React.Component {
                   </ResponsiveContainer>
                 </Card>
 
-                {/* Bán chạy */}
+                {/* Sản phẩm bán chạy */}
                 <Card className="col-span-1 p-6 bg-white shadow-md rounded-2xl">
-                  <h2 className="text-lg font-semibold mb-4 text-gray-700">Bán chạy</h2>
+                  <h2 className="text-lg font-semibold mb-4 text-gray-700">
+                    Top sản phẩm bán chạy
+                  </h2>
                   {topProducts.length === 0 ? (
                     <p className="text-center text-gray-500 py-10">
-                      Không có dữ liệu bán chạy.
+                      Không có dữ liệu.
                     </p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-gray-500">
                           <th className="text-left">Mặt hàng</th>
-                          <th className="text-right">Số lượng</th>
+                          <th className="text-right">SL</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {topProducts.map((item, idx) => (
+                        {topProducts.slice(0, 5).map((item, idx) => (
                           <tr key={idx} className="border-b last:border-0">
                             <td className="py-3 flex items-center gap-3">
                               <img
@@ -387,9 +538,11 @@ class DashboardPage extends React.Component {
                                 className="w-10 h-10 rounded-md object-cover"
                               />
                               <div>
-                                <p className="font-semibold text-gray-800">{item.productName}</p>
+                                <p className="font-semibold text-gray-800">
+                                  {item.productName}
+                                </p>
                                 <p className="text-[#00A8B0] text-xs">
-                                  {(item.averagePrice || 0).toLocaleString()} VND
+                                  {(item.averagePrice || 0).toLocaleString()} ₫
                                 </p>
                               </div>
                             </td>
@@ -410,4 +563,5 @@ class DashboardPage extends React.Component {
     );
   }
 }
+
 export default withRouter(DashboardPage);
