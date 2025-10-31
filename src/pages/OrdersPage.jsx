@@ -115,6 +115,7 @@ class OrdersPageClass extends React.Component {
     showNotifications: false,
     unreadCount: 0,
     savingCustomer: false,
+    shiftStatus: 0,
   };
   showPopup = (title, message, type = "info") => {
     const toastFn = this.props.toast;
@@ -143,7 +144,7 @@ class OrdersPageClass extends React.Component {
   mounted = false;
 
   /* ===================== LIFECYCLE (TỐI ƯU HÓA) ===================== */
-  componentDidMount() {
+  async componentDidMount() {
     this.mounted = true;
     logApp("OrdersPage mounted");
 
@@ -219,8 +220,11 @@ class OrdersPageClass extends React.Component {
         this.fetchAllProductsOnce(),
         this.fetchNotifications(),
       ]);
+      await this.checkShiftStatus();
       logApp("✅ Initial load complete");
     });
+
+    await this.checkShiftStatus();
   }
 
   componentWillUnmount() {
@@ -1032,44 +1036,61 @@ class OrdersPageClass extends React.Component {
       if (this.mounted) this.setState({ loadingCustomer: false });
     }
   };
-  handleGoToPayment = () => {
-    const { invoices, activeIdx } = this.state;
-    const current = invoices[activeIdx];
-    if (!current || !current.orders?.length) {
-      alert("Không có sản phẩm để thanh toán!");
-      return;
-    }
-    const enhancedOrders = current.orders.map((o) => ({
-      ...o,
-      basePrice: Number(o.basePrice || o.price || 0),
-      price: Number(o.price || 0),
-      promotionValue: Number(o.promotionValue || 0),
-    }));
+  handleGoToPayment = async () => {
+    try {
+      const result = await this.checkShiftStatus();
+      if (result !== 1) {
+        this.showPopup(
+          "Chưa mở ca",
+          "Vui lòng mở ca làm việc trước khi bán hàng!",
+          "warning"
+        );
+        return;
+      }
 
-    const orderTotal = enhancedOrders.reduce(
-      (sum, it) => sum + it.qty * it.price,
-      0
-    );
+      const { invoices, activeIdx } = this.state;
+      const current = invoices[activeIdx];
+      if (!current || !current.orders?.length) {
+        this.showToast("Không có sản phẩm để thanh toán!");
+        return;
+      }
 
-    const orderCache = {
-      ...current,
-      orders: enhancedOrders,
-      total: orderTotal,
-      createdAt: new Date().toISOString(),
-      customer: this.state.foundCustomer || null,
-    };
-    localStorage.setItem("lastOrderCache", JSON.stringify(orderCache));
+      const enhancedOrders = current.orders.map((o) => ({
+        ...o,
+        basePrice: Number(o.basePrice || o.price || 0),
+        price: Number(o.price || 0),
+        promotionValue: Number(o.promotionValue || 0),
+      }));
 
-    this.props.navigate("/payment?method=cash", {
-      state: {
-        total: orderTotal,
+      const orderTotal = enhancedOrders.reduce(
+        (sum, it) => sum + it.qty * it.price,
+        0
+      );
+
+      const orderCache = {
+        ...current,
         orders: enhancedOrders,
-        customerId: this.state.foundCustomer?.customerId || null,
-        customerName: this.state.foundCustomer?.fullName || "Khách lẻ",
-        note: current.note || "",
-        paymentMethod: 1,
-      },
-    });
+        total: orderTotal,
+        createdAt: new Date().toISOString(),
+        customer: this.state.foundCustomer || null,
+      };
+
+      localStorage.setItem("lastOrderCache", JSON.stringify(orderCache));
+
+      this.props.navigate("/payment?method=cash", {
+        state: {
+          total: orderTotal,
+          orders: enhancedOrders,
+          customerId: this.state.foundCustomer?.customerId || null,
+          customerName: this.state.foundCustomer?.fullName || "Khách lẻ",
+          note: current.note || "",
+          paymentMethod: 1,
+        },
+      });
+    } catch (e) {
+      console.error("[Payment] handleGoToPayment error:", e);
+      this.showToast("Lỗi khi xử lý thanh toán: " + e.message);
+    }
   };
 
   handleOutsideClick = (e) => {
@@ -1223,27 +1244,59 @@ class OrdersPageClass extends React.Component {
     }
   };
   /* ===================== SHIFT CHECK ===================== */
-  checkShiftStatus = async () => {
+  checkShiftStatus = async (force = false) => {
+    if (this.state.checkingShift && !force) return this.state.shiftStatus;
+
     const token = localStorage.getItem("accessToken");
     const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
     const shopId = Number(profile?.shopId || 0);
-    if (!shopId || !token) return this.setState({ shiftStatus: 0 });
+    if (!shopId || !token) {
+      this.setState({ shiftStatus: 0 });
+      return 0;
+    }
+
+    this.setState({ checkingShift: true });
 
     try {
-      const res = await fetch(`${API_URL}/api/shifts?ShopId=${shopId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const lastChecked = Number(localStorage.getItem("lastShiftCheck") || 0);
+      const now = Date.now();
+      if (!force && now - lastChecked < 120000) {
+        const cached = Number(localStorage.getItem("cachedShiftStatus") || 0);
+        if (cached) {
+          this.setState({ shiftStatus: cached });
+          return cached;
+        }
+      }
+
+      const res = await fetch(
+        `${API_URL}/api/shifts?ShopId=${shopId}&page=1&pageSize=5`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
       const json = await this.safeParse(res);
-      const items = Array.isArray(json?.items)
-        ? json.items
-        : Array.isArray(json?.data)
-          ? json.data
-          : [];
-      const active = items.find((s) => s.status === 1);
-      this.setState({ shiftStatus: active ? 1 : 2 });
+      const items = Array.isArray(json?.items) ? json.items : [];
+      const activeShift = items.find((s) => Number(s.status) === 1);
+
+      const shiftStatus = activeShift ? 1 : 2;
+
+      if (this.mounted) this.setState({ shiftStatus });
+      localStorage.setItem("cachedShiftStatus", shiftStatus.toString());
+      localStorage.setItem("lastShiftCheck", now.toString());
+
+      console.log(
+        `%c[Shift]%c ${shiftStatus === 1 ? "Đang mở" : "Đã đóng"}`,
+        "color:#22c55e;font-weight:700",
+        "color:inherit",
+        items
+      );
+
+      return shiftStatus;
     } catch (e) {
       console.warn("⚠️ checkShiftStatus error:", e.message);
-      this.setState({ shiftStatus: 0 });
+      if (this.mounted) this.setState({ shiftStatus: 0 });
+      return 0;
+    } finally {
+      this.setState({ checkingShift: false });
     }
   };
 
@@ -1400,6 +1453,13 @@ class OrdersPageClass extends React.Component {
 
     return (
       <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40]xl p-3">
+        {/* Cảnh báo trạng thái ca làm việc */}
+        {this.state.shiftStatus === 2 && (
+          <div className="bg-red-100 text-red-700 text-center py-2 font-medium rounded-md mb-3">
+            ⚠️ Ca làm việc hiện đã đóng. Vui lòng mở ca mới để tiếp tục bán
+            hàng.
+          </div>
+        )}
         <div className="flex gap-[5px] bg-[#012E40] h-full">
           {/* LEFT */}
           <div className="w-1/2 flex flex-col min-h-0 ">

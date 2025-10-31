@@ -44,7 +44,8 @@ class DashboardPage extends React.Component {
 
   async componentDidMount() {
     this.loadUser();
-    await Promise.all([this.loadStats(), this.loadShiftStatus()]);
+    await this.loadShiftStatus();
+    setTimeout(() => this.loadStats(), 300);
   }
 
   /* 🧩 Load user info từ localStorage */
@@ -83,7 +84,6 @@ class DashboardPage extends React.Component {
       const token = localStorage.getItem("accessToken");
       const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
       const shopId = Number(profile?.shopId || 0);
-      let { shiftId } = this.state;
 
       if (!token || !shopId) {
         this.setState({ shiftStatus: 0, todayRevenue: 0, todayInvoices: 0 });
@@ -93,6 +93,7 @@ class DashboardPage extends React.Component {
       const res = await fetch(`${API_URL}/api/shifts?ShopId=${shopId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
       const json = await this.safeParse(res);
       const items = Array.isArray(json?.items)
         ? json.items
@@ -104,16 +105,47 @@ class DashboardPage extends React.Component {
               ? json
               : [];
 
-      const active = items.find((s) => Number(s.status) === 1);
-      if (!shiftId && active?.shiftId) shiftId = active.shiftId;
+      const activeShift = items.find((s) => Number(s.status) === 1);
+      let shiftId = activeShift?.shiftId ?? this.state.shiftId ?? 0;
+      let status = activeShift ? 1 : 2;
 
-      const current = items.find((s) => Number(s.shiftId) === Number(shiftId));
-      const status = Number(current?.status ?? 0);
+      if (!activeShift && items.length > 0) {
+        const latest = items.sort(
+          (a, b) => new Date(b.openedAt) - new Date(a.openedAt)
+        )[0];
+        shiftId = latest?.shiftId || shiftId;
+        status = Number(latest?.status ?? 0);
+      }
 
-      this.setState({ shiftId: Number(shiftId || 0), shiftStatus: status });
+      this.setState({ shiftId, shiftStatus: status });
 
-      if (shiftId) await this.loadShiftOrders(shopId, shiftId, token);
-      else this.setState({ todayRevenue: 0, todayInvoices: 0 });
+      if (status === 1) {
+        await this.loadShiftOrders(shopId, shiftId, token);
+        localStorage.setItem(
+          "currentShift",
+          JSON.stringify({
+            shiftId,
+            status: "open",
+            openedAt: activeShift?.openedAt || new Date().toISOString(),
+          })
+        );
+      } else {
+        this.setState({ todayRevenue: 0, todayInvoices: 0 });
+        localStorage.setItem(
+          "currentShift",
+          JSON.stringify({
+            shiftId,
+            status: "closed",
+            closedAt: new Date().toISOString(),
+          })
+        );
+      }
+
+      console.log(
+        `%c[Shift]%c ${status === 1 ? "Đang mở" : "Đã đóng"} | shiftId=${shiftId}`,
+        "color:#00A8B0;font-weight:700",
+        "color:inherit"
+      );
     } catch (err) {
       console.warn("⚠️ loadShiftStatus error:", err);
       this.setState({ shiftStatus: 0, todayRevenue: 0, todayInvoices: 0 });
@@ -137,21 +169,50 @@ class DashboardPage extends React.Component {
               ? json
               : [];
 
+      if (!items.length) {
+        this.setState({ todayInvoices: 0, todayRevenue: 0, totalProfit: 0 });
+        return;
+      }
+
       const successful = items.filter((o) => Number(o?.status ?? 0) === 1);
 
       const totalRevenue = successful.reduce(
         (sum, o) => sum + Number(o?.finalPrice ?? o?.totalPrice ?? 0),
         0
       );
+
       const totalInvoices = successful.length;
+
+      let totalItems = 0;
+      let totalProfit = 0;
+
+      for (const o of successful) {
+        const details = Array.isArray(o.orderDetails)
+          ? o.orderDetails
+          : Array.isArray(o.details)
+            ? o.details
+            : [];
+        for (const d of details) {
+          totalItems += Number(d.quantity ?? d.qty ?? 0);
+          const cost = Number(d.costPrice ?? 0);
+          const price = Number(d.price ?? d.unitPrice ?? 0);
+          totalProfit += (price - cost) * Number(d.quantity ?? 0);
+        }
+      }
 
       this.setState({
         todayInvoices: totalInvoices,
         todayRevenue: totalRevenue,
+        totalProfit,
+        totalItems,
       });
+
+      console.log(
+        `[Shift Orders] shiftId=${shiftId} | invoices=${totalInvoices} | revenue=${totalRevenue.toLocaleString()} | profit=${totalProfit.toLocaleString()}`
+      );
     } catch (err) {
       console.warn("⚠️ loadShiftOrders error:", err);
-      this.setState({ todayInvoices: 0, todayRevenue: 0 });
+      this.setState({ todayInvoices: 0, todayRevenue: 0, totalProfit: 0 });
     }
   }
 
@@ -201,12 +262,41 @@ class DashboardPage extends React.Component {
       this.setState({ loading: false });
     }
   }
+  handleOpenShift = async () => {
+    const token = localStorage.getItem("accessToken");
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = Number(profile?.shopId || 0);
 
-  async componentDidMount() {
-    this.loadUser();
-    await this.loadShiftStatus();
-    await this.loadStats();
-  }
+    try {
+      const res = await fetch(`${API_URL}/api/shifts/open-shift`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ shopId }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.shiftId) {
+        alert("✅ Đã mở ca mới thành công!");
+        localStorage.setItem(
+          "currentShift",
+          JSON.stringify({
+            shiftId: data.shiftId,
+            status: "open",
+            openedAt: new Date().toISOString(),
+          })
+        );
+        this.setState({ shiftId: data.shiftId, shiftStatus: 1 });
+        await this.loadShiftStatus();
+      } else {
+        alert("⚠️ Mở ca thất bại!");
+      }
+    } catch (err) {
+      alert("❌ Không thể kết nối API mở ca!");
+      console.error(err);
+    }
+  };
 
   handleCloseShift = async () => {
     const {
@@ -340,14 +430,14 @@ class DashboardPage extends React.Component {
 
             {/* Nút đóng/mở ca */}
             <button
-              onClick={this.handleCloseShift}
+              onClick={isClosed ? this.handleOpenShift : this.handleCloseShift}
               disabled={closing}
               className={`flex items-center gap-2 px-5 py-2 rounded-lg font-semibold text-white transition-all ${
                 closing
                   ? "bg-gray-400 cursor-not-allowed"
                   : isClosed
-                    ? "bg-[#00A8B0] hover:bg-[#008f8a]" // nút mở ca
-                    : "bg-[#FF6D60] hover:bg-[#ff4c3f]" // nút đóng ca
+                    ? "bg-[#00A8B0] hover:bg-[#008f8a]"
+                    : "bg-[#FF6D60] hover:bg-[#ff4c3f]"
               }`}
             >
               <Power className="w-5 h-5" />

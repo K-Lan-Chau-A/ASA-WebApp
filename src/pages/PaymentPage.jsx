@@ -336,6 +336,21 @@ class PaymentPageClass extends React.Component {
     }
     return 0;
   }
+  async getOrWaitOrderId(timeoutMs = 3000) {
+    let oid = this.state.orderId || 0;
+    if (oid > 0) return oid;
+
+    oid = await this.createOrderIfNeeded();
+    if (oid > 0) return oid;
+
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (this.state.orderId > 0) return this.state.orderId;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return 0;
+  }
+
   async createOrderIfNeeded() {
     if (this.state.orderId && this.state.orderId > 0) {
       return this.state.orderId;
@@ -565,6 +580,7 @@ class PaymentPageClass extends React.Component {
       productUnitId: Number(it.productUnitId || 0),
       productId: Number(it.id || 0),
     }));
+
     if (
       !details.length &&
       Array.isArray(last.orderDetails) &&
@@ -576,6 +592,7 @@ class PaymentPageClass extends React.Component {
         productId: Number(d.productId ?? d.id ?? 0),
       }));
     }
+
     if (!details.length) {
       const token = localStorage.getItem("accessToken") || "";
       const url = `${API_URL}/api/order-details?OrderId=${orderId}&page=1&pageSize=5000`;
@@ -585,8 +602,6 @@ class PaymentPageClass extends React.Component {
             accept: "*/*",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          mode: "cors",
-          cache: "no-store",
         });
         const data = await this.safeParse(res);
         if (res.ok) {
@@ -610,17 +625,24 @@ class PaymentPageClass extends React.Component {
       METHOD_MAP[this.state.activeTab] ??
       1;
 
-    const paymentMethod = this.normalizePaymentMethod(rawPm);
+    const paymentMethod = Number(this.normalizePaymentMethod(rawPm) || 0);
+
+    const rawCustomerId =
+      overrides.customerId ??
+      head?.customerId ??
+      last?.customerId ??
+      this.state.customerId ??
+      null;
+
+    const customerId =
+      rawCustomerId != null && !Number.isNaN(Number(rawCustomerId))
+        ? Number(rawCustomerId)
+        : null;
 
     const payload = {
-      customerId:
-        overrides.customerId ??
-        head?.customerId ??
-        last?.customerId ??
-        this.state.customerId ??
-        0,
+      customerId,
       paymentMethod,
-      isSendInvoice: false,
+      isSendInvoice: overrides.isSendInvoice ?? false,
       status: overrides.status ?? head?.status ?? last?.status ?? 0,
       shopId: Number(overrides.shopId ?? shopId ?? head?.shopId ?? 0),
       shiftId: Number(overrides.shiftId ?? shiftId ?? head?.shiftId ?? 0),
@@ -632,105 +654,99 @@ class PaymentPageClass extends React.Component {
       orderDetails: details,
     };
 
+    // ✅ Dọn sạch field null/undefined
+    Object.keys(payload).forEach((k) => {
+      if (payload[k] === undefined || payload[k] === "null") delete payload[k];
+    });
+
     log("buildFullPayload:", payload);
     return payload;
   }
 
-  /* ---------- PUT paymentMethod ngay khi click (giữ status=0) ---------- */
+  /* ---------- PUT đầy đủ khi đổi phương thức thanh toán ---------- */
   ensurePaymentMethod = async (orderId, pm) => {
     if (!orderId || !pm) return;
     const token = localStorage.getItem("accessToken") || "";
+
     try {
-      const payload = {
+      // 🟢 Build payload đầy đủ (bao gồm shopId, shiftId, orderDetails, ...)
+      const payload = await this.buildFullPayload(orderId, {
         paymentMethod: pm,
-        note: this.state.note || "",
         status: 0,
-      };
+        note: this.state.note || "",
+        isSendInvoice: true, // ✅ bắt buộc theo Swagger
+      });
+
+      // 🔹 Loại bỏ field null/undefined để tránh lỗi
+      Object.keys(payload).forEach((k) => {
+        if (payload[k] == null) delete payload[k];
+      });
+
       const url = `${API_URL}/api/orders/${orderId}`;
       const res = await fetch(url, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
+          accept: "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+
+      const data = await this.safeParse(res);
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
       this.setState({ payMethodId: pm });
-      console.log(`✅ Cập nhật paymentMethod=${pm} cho order #${orderId}`);
+      log(`✅ Cập nhật paymentMethod=${pm} cho order #${orderId}`, payload);
     } catch (e) {
-      console.error("[Payment] ensurePaymentMethod failed:", e);
+      err("ensurePaymentMethod failed:", e?.message || e);
+      this.showToast("❌ Lỗi cập nhật phương thức thanh toán");
     }
   };
 
   /* ---------- Back / rời trang → status:2 ---------- */
-  putStatus2 = async (orderIdArg) => {
-    // —— 1) Lấy orderId chắc chắn
-    const oidFromState = Number(
-      this.state.orderId || this.state.displayOrderId || 0
-    );
-    let orderId = Number(orderIdArg || oidFromState || 0);
+  async putStatus2(orderIdArg) {
+    if (this.state.activeTab === "cash") return;
+    let orderId = Number(orderIdArg || 0);
     if (!orderId) {
-      log("PUT status=2: chưa có orderId → chờ waitForOrderId(5000)...");
-      orderId = await this.waitForOrderId(1000); // tăng timeout để chắc id có
+      orderId = await this.getOrWaitOrderId(3000);
     }
     if (!orderId) {
-      warn("PUT status=2: không có orderId, bỏ qua.");
+      warn("PUT status=2: vẫn chưa có orderId, bỏ qua PUT.");
       return;
     }
 
-    // —— 2) Không push status=2 nếu đã paid (status 1)
-    if (this._isPaid) {
-      log("PUT status=2: đơn đã thanh toán (_isPaid), bỏ qua.");
-      return;
-    }
-    if (this._didSetStatus2) {
-      log("PUT status=2: đã set trước đó (_didSetStatus2=true), bỏ qua.");
-      return;
-    }
+    if (this._isPaid || this._didSetStatus2) return;
 
     const token = localStorage.getItem("accessToken") || "";
-
     try {
-      // —— 3) Build payload đầy đủ, ÉP status=2 và paymentMethod là số
       const payload = await this.buildFullPayload(orderId, { status: 2 });
       payload.paymentMethod = this.normalizePaymentMethod(
         payload.paymentMethod ?? METHOD_MAP[this.state.activeTab] ?? 1
       );
 
-      // log trước khi bắn
       log("PUT status=2 – final payload:", { orderId, payload });
 
       const url = `${API_URL}/api/orders/${orderId}`;
-      const t0 = performance.now();
       const res = await fetch(url, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          accept: "application/json, text/plain, */*",
+          accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         mode: "cors",
         cache: "no-store",
-        keepalive: true, // QUAN TRỌNG khi điều hướng
+        keepalive: true,
         body: JSON.stringify(payload),
       });
-      const dt = Math.round(performance.now() - t0);
       const data = await this.safeParse(res);
-      log(`PUT status=2 → ${res.status} (${dt}ms)`, url, data);
-
-      if (!res.ok) {
-        // In lỗi backend (validation) cho dễ soi
-        err("PUT status=2 FAILED payload:", payload);
-        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-      }
-
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       this._didSetStatus2 = true;
     } catch (e) {
       err("PUT status=2 FAILED:", e?.message || e);
     }
-  };
+  }
 
   /* ---------- QR flow ---------- */
   async fetchVietQR(orderId) {
@@ -763,8 +779,11 @@ class PaymentPageClass extends React.Component {
   }
 
   async initQRFlow() {
-    const oid = await this.waitForOrderId(3000);
-    if (!oid) return;
+    const oid = await this.getOrWaitOrderId(3000);
+    if (!oid) {
+      this.showToast("⚠️ Không thể lấy OrderId để tạo mã QR");
+      return;
+    }
     await this.ensurePaymentMethod(oid, METHOD_MAP.qr);
     await this.fetchVietQR(oid);
     this.startPolling(oid);
@@ -869,26 +888,15 @@ class PaymentPageClass extends React.Component {
       state: this.props.location?.state,
     });
 
-    let oid = this.state.orderId || 0;
+    let oid = await this.getOrWaitOrderId(3000);
     if (!oid) {
-      oid = await this.createOrderIfNeeded();
-      if (!oid) {
-        this.showToast("⚠️ Không thể tạo đơn hàng mới", 2000);
-        return;
-      }
-      if (newId > 0) {
-        await this.fetchOrderDetailsFor(newId);
-        this.setState({ orderId: newId, displayOrderId: newId });
-        await this.fetchOrderDetailsFor(newId);
-        await this.fetchOrderHead(newId);
-        console.log(`✅ Đã tạo đơn hàng #${newId}`);
-        return newId;
-      }
+      this.showToast("⚠️ Không thể tạo hoặc lấy OrderId hợp lệ");
+      return;
     }
 
     const pm = METHOD_MAP[tab] ?? null;
     if (oid && pm) await this.ensurePaymentMethod(oid, pm);
-    if (tab === "qr") this.initQRFlow();
+    if (tab === "qr") await this.initQRFlow();
     else this.stopPolling();
   };
 
@@ -903,15 +911,22 @@ class PaymentPageClass extends React.Component {
       discountValue: Number(it.promotionValue || 0),
     }));
 
-    const paymentMethod =
-      this.state.payMethodId ?? METHOD_MAP[this.state.activeTab] ?? 1;
+    const paymentMethod = Number(
+      this.normalizePaymentMethod(
+        this.state.payMethodId ?? METHOD_MAP[this.state.activeTab] ?? 1
+      ) || 0
+    );
 
-    const subtotal = this.subtotal();
+    const rawCustomerId = this.state.customerId ?? null;
+    const customerId =
+      rawCustomerId != null && !Number.isNaN(Number(rawCustomerId))
+        ? Number(rawCustomerId)
+        : null;
 
     const manualPercent = Number(this.state.manualDiscountPercent || 0);
 
     const payload = {
-      customerId: this.state.customerId || null,
+      customerId,
       paymentMethod,
       status: this.state.activeTab === "cash" ? 1 : 0,
       shiftId: shiftId ?? null,
@@ -923,6 +938,10 @@ class PaymentPageClass extends React.Component {
       orderDetails,
     };
 
+    Object.keys(payload).forEach((k) => {
+      if (payload[k] === undefined || payload[k] === "null") delete payload[k];
+    });
+
     log("buildPayload →", payload);
     return payload;
   }
@@ -932,10 +951,46 @@ class PaymentPageClass extends React.Component {
     const token = localStorage.getItem("accessToken") || "";
 
     try {
-      let orderId = this.state.orderId || 0;
-      if (!orderId) orderId = await this.createOrderIfNeeded();
+      if (this.state.activeTab === "cash") {
+        const orderId = await this.createOrderIfNeeded();
+        if (!orderId) {
+          this.showToast("❌ Không thể tạo đơn hàng tiền mặt");
+          this.setState({ loading: false });
+          return;
+        }
+
+        const payload = await this.buildFullPayload(orderId, {
+          status: 1,
+          note: this.state.note,
+          isSendInvoice: false,
+        });
+
+        const url = `${API_URL}/api/orders/${orderId}`;
+        const res = await fetch(url, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await this.safeParse(res);
+        if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+
+        log(`💰 [CASH] PUT status=1 → OK`, url, data);
+        this._isPaid = true;
+
+        await this.handlePrintReceipt();
+        this.showToast("✅ Thanh toán thành công!");
+        setTimeout(() => this.props.navigate("/orders"), 800);
+        return;
+      }
+
+      const orderId = await this.getOrWaitOrderId(3000);
       if (!orderId) {
-        this.showToast("❌ Không thể tạo đơn hàng mới");
+        this.showToast("❌ Không thể lấy OrderId để cập nhật đơn");
         this.setState({ loading: false });
         return;
       }
@@ -964,14 +1019,7 @@ class PaymentPageClass extends React.Component {
 
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
-      if (this.state.activeTab === "cash") {
-        this._isPaid = true;
-        await this.handlePrintReceipt();
-        this.showToast("✅ Thanh toán thành công!");
-        setTimeout(() => this.props.navigate("/orders"), 800);
-      } else {
-        this.showToast("💳 Đã cập nhật trạng thái chờ thanh toán");
-      }
+      this.showToast("💳 Đã cập nhật trạng thái chờ thanh toán");
     } catch (e) {
       console.error("[Payment] ❌ submitOrder:", e);
       this.setState({ error: e.message || "Lỗi cập nhật đơn hàng" });
@@ -1038,12 +1086,16 @@ class PaymentPageClass extends React.Component {
         received:
           this.state.activeTab === "cash"
             ? this.state.received > 0
-              ? this.state.received
-              : totalAfter
+              ? Number(this.state.received)
+              : Number(this.totalAfter)
             : null,
         change:
           this.state.activeTab === "cash"
-            ? Math.max(0, (this.state.received || totalAfter) - totalAfter)
+            ? Math.max(
+                0,
+                Number(this.state.received || this.totalAfter) -
+                  Number(this.totalAfter)
+              )
             : null,
         isSendInvoice: false,
         note: this.state.note || "",
@@ -1084,15 +1136,22 @@ class PaymentPageClass extends React.Component {
 
   get effectiveReceived() {
     const entered = Number(this.state.received || 0);
-    return entered > 0 ? entered : this.totalAfter;
+    const total = Number(this.totalAfter || 0);
+    return entered > 0 ? entered : total;
   }
 
   get change() {
-    return Math.max(0, this.effectiveReceived - this.totalAfter);
+    const received = Number(this.effectiveReceived || 0);
+    const total = Number(this.totalAfter || 0);
+    return Math.max(0, received - total);
   }
+
   get shortage() {
-    return Math.max(0, this.totalAfter - this.effectiveReceived);
+    const total = Number(this.totalAfter || 0);
+    const received = Number(this.effectiveReceived || 0);
+    return Math.max(0, total - received);
   }
+
   get discountSum() {
     const voucherDiscount = Number(this.state.voucherDiscount || 0);
     const manualDiscount = Number(this.state.manualDiscountValue || 0);

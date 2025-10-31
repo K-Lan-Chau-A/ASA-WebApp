@@ -162,28 +162,26 @@ export default class PrintTemplate {
     out += line + "\n";
 
     (order.items || []).forEach((it) => {
-      // 🧾 Dòng 1: Tên sản phẩm
-      const name = (it.name || "").substring(0, 32); // vừa khổ 80mm
+      const name = (it.name || "").substring(0, 32);
       out += `${name}\n`;
 
-      // 💰 Dòng 2: Giá - SL - Tổng
-      const base = Number(item.basePrice || item.unitPrice || item.price || 0);
-      const promo = Number(item.promotionValue || item.discountValue || 0);
+      const base = Number(it.basePrice || it.unitPrice || it.price || 0);
+      const promo = Number(it.promotionValue || it.discountValue || 0);
       const price = Math.max(0, base - promo);
 
       const qty = String(it.qty).padStart(4, " ");
-      const total = fmt.format(it.price * it.qty).padStart(10, " ");
-      out += `${price}       x${qty}   =${total}\n`;
+      const total = fmt.format(price * it.qty).padStart(10, " ");
+      out += `${fmt.format(price)}       x${qty}   =${total}\n`;
 
-      // 📝 Dòng ghi chú (nếu có)
       if (it.note) out += `  • ${it.note}\n`;
 
       out += line + "\n";
     });
+
     // ===== TỔNG KẾT =====
     const itemCount = (order.items || []).reduce((s, i) => s + i.qty, 0);
     const subTotal = (order.items || []).reduce(
-      (s, i) => s + i.price * i.qty,
+      (s, i) => s + Number(i.price || i.basePrice || 0) * Number(i.qty || 0),
       0
     );
 
@@ -230,11 +228,9 @@ export default class PrintTemplate {
     out += `Phương thức: ${payLabel}\n`;
 
     if (order.method === "cash") {
-      const received = order.received != null ? order.received : order.total;
-      const change =
-        order.change != null
-          ? order.change
-          : Math.max(0, received - order.total);
+      const total = Number(order.totalAfter ?? order.total ?? 0);
+      const received = Number(order.received ?? total);
+      const change = Math.max(0, received - total);
 
       out += `Tiền khách đưa:     ${fmt.format(received)} đ\n`;
       out += `Tiền thừa:          ${fmt.format(change)} đ\n`;
@@ -288,16 +284,15 @@ export default class PrintTemplate {
               ? "ATM"
               : "KHÁC";
 
+    const total = Number(order.totalAfter ?? order.total ?? 0);
     const received =
       order.method === "cash"
-        ? order.received > 0
-          ? order.received
-          : order.total
+        ? Number(order.received) > 0
+          ? Number(order.received)
+          : total
         : null;
     const change =
-      order.method === "cash"
-        ? Math.max(0, (received || order.total) - order.total)
-        : null;
+      order.method === "cash" ? Math.max(0, Number(received) - total) : null;
 
     // ==== TÍNH TOÁN GIẢM GIÁ ====
     const subTotal = (order.items || []).reduce(
