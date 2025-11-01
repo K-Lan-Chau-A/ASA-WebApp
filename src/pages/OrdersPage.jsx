@@ -1635,7 +1635,18 @@ class OrdersPageClass extends React.Component {
     const total = orders.reduce((s, it) => s + it.price * it.qty, 0);
 
     return (
-      <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40]xl p-3">
+      <div 
+        className="h-screen w-full bg-[#012E40] border-4 border-[#012E40] p-0 m-0"
+        style={{ 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0,
+          margin: 0,
+          padding: 0 
+        }}
+      >
         {/* Cảnh báo trạng thái ca làm việc */}
         {this.state.shiftStatus === 2 && (
           <div className="bg-red-100 text-red-700 text-center py-2 font-medium rounded-md mb-3">
@@ -1643,7 +1654,7 @@ class OrdersPageClass extends React.Component {
             hàng.
           </div>
         )}
-        <div className="flex gap-[5px] bg-[#012E40] h-full">
+        <div className="flex gap-0 bg-[#012E40] h-full">
           {/* LEFT */}
           <div className="w-1/2 flex flex-col min-h-0 ">
             <div className="flex items-center justify-between px-4 py-3 mb-2">
@@ -2012,7 +2023,7 @@ class OrdersPageClass extends React.Component {
 
             <div className="flex-1 flex flex-col bg-white rounded-xl overflow-hidden">
               {/* === THANH KHÁCH HÀNG FULL WIDTH === */}
-              <div className="flex items-center gap-3 w-full px-6 py-2 bg-white">
+              <div className="flex items-center gap-3 w-full px-6 py-0.5 bg-white">
                 {/* Icon KH */}
                 <div className="w-8 h-8 rounded-md bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px] font-bold">
                   KH
@@ -2105,7 +2116,7 @@ class OrdersPageClass extends React.Component {
                 </div>
               </div>
 
-              <div className="px-5 py-2 text-sm text-gray-700 font-semibold border-b">
+              <div className="px-5 py-[13px] text-sm text-gray-700 font-semibold border-b">
                 <div className="grid grid-cols-[1fr_110px_150px_120px_150px_40px]">
                   <span>Sản phẩm</span>
                   <span className="text-center">Đơn giá</span>
