@@ -65,11 +65,16 @@ class ProductPageClass extends React.Component {
     showSuggest: false,
 
     saving: false,
+    invoiceFile: null,
+    invoicePreview: "",
+    showInvoiceModal: false,
+    invoiceViewUrl: "",
   };
 
   mounted = false;
 
   /* ---------- LIFECYCLE ---------- */
+
   componentDidMount() {
     document.addEventListener("click", this.handleOutsideClick);
     this.mounted = true;
@@ -405,6 +410,8 @@ class ProductPageClass extends React.Component {
         importPrice: "",
         suggestList: [],
         showSuggest: false,
+        invoiceFile: null,
+        invoicePreview: "",
       });
     } else {
       this.setState({ showAddModal: true });
@@ -525,6 +532,12 @@ class ProductPageClass extends React.Component {
       formData.append("UnitsJson", JSON.stringify(unitsPayload));
 
       if (imageFile) formData.append("ProductImageFile", imageFile);
+      if (this.state.invoiceFile)
+        formData.append(
+          "InventoryTransaction.InventoryTransImageFile",
+          this.state.invoiceFile
+        );
+
       formData.append("InventoryTransaction.Quantity", String(quantity || 0));
       formData.append("InventoryTransaction.Price", String(cost || 0));
 
@@ -633,7 +646,12 @@ class ProductPageClass extends React.Component {
     if (!str) return 0;
     return Number(String(str).replace(/[^\d]/g, "")) || 0;
   };
-
+  toggleInvoiceModal = (show = false, url = "") => {
+    this.setState({
+      showInvoiceModal: show,
+      invoiceViewUrl: url || this.state.invoicePreview,
+    });
+  };
   renderAddModal() {
     const {
       categories,
@@ -996,6 +1014,65 @@ class ProductPageClass extends React.Component {
                     ))
                   )}
                 </div>
+              </div>
+              {/* Upload ảnh hóa đơn / chứng từ */}
+              <div className="mt-6">
+                <h3 className="font-semibold text-gray-700 mb-2">
+                  Ảnh hóa đơn / chứng từ
+                </h3>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file)
+                      this.setState({
+                        invoiceFile: file,
+                        invoicePreview: URL.createObjectURL(file),
+                      });
+                  }}
+                  className="block w-full text-sm text-gray-700
+      file:mr-4 file:py-2 file:px-4
+      file:rounded-md file:border-0
+      file:text-sm file:font-semibold
+      file:bg-[#00A8B0] file:text-white
+      hover:file:bg-[#009197]
+      cursor-pointer"
+                />
+
+                {this.state.invoicePreview && (
+                  <div className="mt-3">
+                    <img
+                      src={this.state.invoicePreview}
+                      alt="Invoice Preview"
+                      className="w-40 h-auto rounded-md border shadow-sm cursor-pointer hover:opacity-80 transition"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.toggleInvoiceModal(
+                          true,
+                          this.state.invoicePreview
+                        );
+                      }}
+                    />
+
+                    <p className="text-xs text-gray-500 mt-1">
+                      Đã chọn: <strong>{this.state.invoiceFile?.name}</strong> —{" "}
+                      <span
+                        className="text-blue-600 cursor-pointer hover:underline"
+                        onClick={() =>
+                          this.toggleInvoiceModal(
+                            true,
+                            this.state.invoicePreview
+                          )
+                        }
+                      >
+                        Xem ảnh
+                      </span>
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1615,6 +1692,26 @@ class ProductPageClass extends React.Component {
     const q = normalize(this.state.search);
     return entry.items.filter((it) => normalize(it.name).includes(q));
   };
+  renderInvoiceModal() {
+    if (!this.state.showInvoiceModal) return null;
+    return (
+      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
+        <div className="relative bg-black rounded-xl p-4 max-w-4xl max-h-[90vh] overflow-auto">
+          <button
+            onClick={() => this.toggleInvoiceModal(false)}
+            className="absolute top-3 right-3 text-white hover:text-gray-300"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={this.state.invoiceViewUrl}
+            alt="Invoice Full View"
+            className="rounded-lg max-h-[85vh] object-contain mx-auto"
+          />
+        </div>
+      </div>
+    );
+  }
 
   render() {
     const {
@@ -1803,6 +1900,8 @@ class ProductPageClass extends React.Component {
           {showAddModal && this.renderAddModal()}
           {this.state.showUnitModal && this.renderUnitModal()}
           {this.state.showDetailModal && this.renderDetailModal()}
+          {this.renderInvoiceModal()}
+
           {this.state.showEditModal && this.renderEditModal()}
         </div>
       </div>

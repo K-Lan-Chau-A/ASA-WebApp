@@ -11,6 +11,7 @@ import {
   Tag,
   UserCog,
   FileText,
+  Package,
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -23,6 +24,7 @@ export default function Sidebar() {
     { icon: Folder, label: "Danh mục", path: "/categories" },
     { icon: ShoppingBag, label: "Đơn hàng", path: "/products" },
     { icon: FileText, label: "Hóa đơn", path: "/invoices" },
+    { icon: Package, label: "Lịch sử kho", path: "/inventory-transactions" },
     { icon: Users, label: "Khách hàng", path: "/customers" },
     { icon: Gift, label: "Voucher", path: "/vouchers" },
     { icon: Medal, label: "Rank", path: "/ranks" },

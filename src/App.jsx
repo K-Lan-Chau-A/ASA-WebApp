@@ -17,6 +17,7 @@ import PromotionPage from "./pages/PromotionPage";
 import UserFeaturePage from "./pages/UserFeaturePage";
 import DashboardPage from "./pages/DashboardPage";
 import InvoicesPage from "./pages/InvoicesPage";
+import InventoryTransactionPage from "./pages/InventoryTransactionPage";
 import { Toaster } from "@/components/ui/toaster";
 export default function App() {
   return (
@@ -38,6 +39,10 @@ export default function App() {
             <Route path="/user-features" element={<UserFeaturePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/invoices" element={<InvoicesPage />} />
+            <Route
+              path="/inventory-transactions"
+              element={<InventoryTransactionPage />}
+            />
           </Routes>
           <Toaster />
         </main>
