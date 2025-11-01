@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Sidebar from "@/components/sidebar";
 import API_URL from "@/config/api";
-import { Search, Plus, Trash2, Edit, User, CreditCard } from "lucide-react";
+import { Search, Plus, Trash2, Edit, User } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -31,18 +31,13 @@ const fmtMoney = (n) =>
     currency: "VND",
   });
 
-const rankMap = {
-  1: { name: "Đồng", color: "bg-[#CD7F32]", text: "text-white" },
-  2: { name: "Bạc", color: "bg-gray-400", text: "text-white" },
-  3: { name: "Vàng", color: "bg-yellow-400", text: "text-black" },
-  4: { name: "Kim cương", color: "bg-blue-400", text: "text-white" },
-};
-
 class CustomerPageClass extends React.Component {
   state = {
     shopId: null,
     customers: [],
     nfcs: [],
+    // 👇 thêm
+    ranks: [],
     search: "",
     loading: false,
     error: "",
@@ -55,14 +50,13 @@ class CustomerPageClass extends React.Component {
       spent: 0,
       gender: 0,
       birthday: "",
-      avatar: "", // URL hoặc base64 preview
+      avatar: "",
     },
-    avatarFile: null, // file thực tế để upload
+    avatarFile: null,
   };
 
   mounted = false;
 
-  /* ---------- LIFECYCLE ---------- */
   componentDidMount() {
     this.mounted = true;
     this.initShop();
@@ -91,10 +85,11 @@ class CustomerPageClass extends React.Component {
     this.setState({ shopId }, () => {
       this.fetchCustomers();
       this.fetchNFCs();
+      this.fetchRanks(); // 👈 lấy rank từ backend
     });
   };
 
-  /* ---------- API ---------- */
+  /* ---------- API common ---------- */
   safeParse = async (res) => {
     try {
       return await res.json();
@@ -147,6 +142,25 @@ class CustomerPageClass extends React.Component {
     }
   };
 
+  // 👇 LẤY RANK TỪ API
+  fetchRanks = async () => {
+    const { shopId } = this.state;
+    if (!shopId) return;
+    try {
+      const res = await fetch(
+        `${API_URL}/api/ranks?ShopId=${shopId}&page=1&pageSize=100`,
+        { headers: { accept: "application/json" } }
+      );
+      const data = await this.safeParse(res);
+      if (res.ok) {
+        // items: [{ rankId, rankName, benefit, threshold, shopId }]
+        this.setState({ ranks: Array.isArray(data.items) ? data.items : [] });
+      }
+    } catch (e) {
+      console.log("Fetch ranks error:", e);
+    }
+  };
+
   /* ---------- CRUD ---------- */
   handleOpenAdd = () =>
     this.setState({
@@ -159,6 +173,7 @@ class CustomerPageClass extends React.Component {
         spent: 0,
         gender: 0,
         birthday: "",
+        // rankId: null, // nếu muốn chọn rank tay thì để đây
       },
     });
 
@@ -173,6 +188,7 @@ class CustomerPageClass extends React.Component {
         spent: item.spent || 0,
         gender: item.gender || 0,
         birthday: item.birthday?.split("T")[0] || "",
+        // rankId: item.rankId || item.rankid || null,
       },
     });
 
@@ -200,6 +216,8 @@ class CustomerPageClass extends React.Component {
         formData.append("gender", form.gender || 0);
         formData.append("birthday", form.birthday || null);
         formData.append("shopId", shopId);
+        // nếu cho phép chọn rank ở form thì:
+        // if (form.rankId) formData.append("rankId", form.rankId);
         formData.append("avatar", avatarFile);
         body = formData;
         headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -212,6 +230,7 @@ class CustomerPageClass extends React.Component {
           birthday: form.birthday || null,
           avatar: form.avatar || "",
           shopId,
+          // rankId: form.rankId || null,
         });
         headers = {
           "Content-Type": "application/json",
@@ -269,8 +288,38 @@ class CustomerPageClass extends React.Component {
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
     return customers.filter((c) =>
-      c.fullName.toLowerCase().normalize("NFD").includes(q)
+      (c.fullName || "").toLowerCase().normalize("NFD").includes(q)
     );
+  };
+
+  /* ---------- Rank resolve ---------- */
+  // lấy rank từ ranks theo id
+  resolveRankById = (rankId) => {
+    const { ranks } = this.state;
+    if (!rankId) return null;
+    return ranks.find(
+      (r) =>
+        Number(r.rankId) === Number(rankId) ||
+        Number(r.rankID) === Number(rankId)
+    );
+  };
+
+  // nếu KH không có rankId → suy ra từ spent
+  resolveRankBySpent = (spent) => {
+    const { ranks } = this.state;
+    if (!ranks.length) return null;
+    // API của bạn: threshold nhỏ → cấp thấp; threshold lớn → cấp cao
+    // mình sort tăng theo threshold rồi lấy rank cao nhất mà spent >= threshold
+    const sorted = [...ranks].sort(
+      (a, b) => Number(a.threshold || 0) - Number(b.threshold || 0)
+    );
+    let found = null;
+    for (const r of sorted) {
+      if (Number(spent || 0) >= Number(r.threshold || 0)) {
+        found = r;
+      }
+    }
+    return found;
   };
 
   /* ---------- RENDER ---------- */
@@ -284,6 +333,7 @@ class CustomerPageClass extends React.Component {
       showDialog,
       form,
       editing,
+      ranks,
     } = this.state;
     const filtered = this.getFiltered();
 
@@ -327,7 +377,25 @@ class CustomerPageClass extends React.Component {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filtered.map((cus) => {
-                const rank = rankMap[cus.rankid] || rankMap["2"];
+                // 👇 lấy rankId từ mọi kiểu tên field
+                const rawRankId =
+                  cus.rankId ?? cus.rankID ?? cus.rankid ?? cus.RankId ?? null;
+
+                // ưu tiên lấy theo id
+                let rank = this.resolveRankById(rawRankId);
+
+                // nếu không có id mà có spent → suy từ threshold
+                if (!rank) {
+                  rank = this.resolveRankBySpent(cus.spent || cus.totalSpent);
+                }
+
+                // nếu vẫn không có → fallback Đồng
+                const displayRank = rank || {
+                  rankId: 1,
+                  rankName: "Đồng",
+                  color: "bg-[#CD7F32]",
+                };
+
                 const nfc = nfcs.find((n) => n.customerId === cus.customerId);
 
                 const genderLabel =
@@ -354,10 +422,8 @@ class CustomerPageClass extends React.Component {
                             <User className="w-7 h-7 text-gray-400" />
                           </div>
                         )}
-                        <span
-                          className={`absolute -bottom-1 -right-1 px-2 py-0.5 rounded-full text-[10px] ${rank.color} ${rank.text}`}
-                        >
-                          {rank.name}
+                        <span className="absolute -bottom-1 -right-1 px-2 py-0.5 rounded-full text-[10px] bg-[#00A8B0] text-white">
+                          {displayRank.rankName || displayRank.name || "Đồng"}
                         </span>
                       </div>
 
@@ -449,7 +515,7 @@ class CustomerPageClass extends React.Component {
 
                 <div>
                   <label className="block text-sm font-medium mb-1">
-                    Số điện thoại *
+                    Số điện thoại <span className="text-red-500"> *</span>
                   </label>
                   <Input
                     value={form.phone}
@@ -464,7 +530,7 @@ class CustomerPageClass extends React.Component {
 
                 <div>
                   <label className="block text-sm font-medium mb-1">
-                    Email
+                    Email<span className="text-red-500"> *</span>
                   </label>
                   <Input
                     value={form.email}
@@ -492,6 +558,7 @@ class CustomerPageClass extends React.Component {
                   />
                 </div>
               </div>
+
               {/* Giới tính */}
               <div>
                 <label className="block text-sm font-medium mb-1">
@@ -510,41 +577,6 @@ class CustomerPageClass extends React.Component {
                   <option value={1}>Nữ</option>
                   <option value={2}>Khác</option>
                 </select>
-              </div>
-
-              {/* Ảnh đại diện */}
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Ảnh đại diện
-                </label>
-                <label className="w-full border-2 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition flex flex-col items-center justify-center py-6">
-                  {form.avatar ? (
-                    <img
-                      src={form.avatar}
-                      alt="Preview"
-                      className="w-20 h-20 rounded-full object-cover border"
-                    />
-                  ) : (
-                    <>
-                      <User className="w-6 h-6 text-gray-400 mb-1" />
-                      <span className="text-xs text-gray-500">Tải ảnh lên</span>
-                    </>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const url = URL.createObjectURL(file);
-                      this.setState({
-                        avatarFile: file,
-                        form: { ...form, avatar: url },
-                      });
-                    }}
-                  />
-                </label>
               </div>
 
               <DialogFooter className="flex justify-end gap-3">

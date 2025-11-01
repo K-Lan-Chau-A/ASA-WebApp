@@ -22,7 +22,8 @@ import {
   CircleDot,
 } from "lucide-react";
 import API_URL from "@/config/api";
-import { printCloseShift } from "@/lib/CloseShiftTemplate";
+import { printCloseShiftHtml } from "@/lib/CloseShiftPrinter";
+
 import { withRouter } from "@/utils/withRouter";
 
 class DashboardPage extends React.Component {
@@ -39,13 +40,32 @@ class DashboardPage extends React.Component {
     shiftId: 0,
     openedAt: null,
     closing: false,
-    shiftStatus: 0, // 0=chưa mở, 1=đang mở, 2=đã đóng
+    shiftStatus: 0,
   };
 
   async componentDidMount() {
     this.loadUser();
+    const token = localStorage.getItem("accessToken");
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = Number(profile?.shopId || 0);
+
+    await this.loadAllOrders(shopId, token);
+    await this.loadStats();
+
     await this.loadShiftStatus();
-    setTimeout(() => this.loadStats(), 300);
+
+    this.startShiftStatusMonitor();
+  }
+
+  componentWillUnmount() {
+    if (this.shiftMonitor) clearInterval(this.shiftMonitor);
+  }
+
+  async startShiftStatusMonitor() {
+    this.shiftMonitor = setInterval(async () => {
+      console.log("🔍 Checking shift status...");
+      await this.loadShiftStatus();
+    }, 15000);
   }
 
   /* 🧩 Load user info từ localStorage */
@@ -108,6 +128,7 @@ class DashboardPage extends React.Component {
       const activeShift = items.find((s) => Number(s.status) === 1);
       let shiftId = activeShift?.shiftId ?? this.state.shiftId ?? 0;
       let status = activeShift ? 1 : 2;
+      if (!activeShift && items.length === 0) status = 2;
 
       if (!activeShift && items.length > 0) {
         const latest = items.sort(
@@ -130,7 +151,6 @@ class DashboardPage extends React.Component {
           })
         );
       } else {
-        this.setState({ todayRevenue: 0, todayInvoices: 0 });
         localStorage.setItem(
           "currentShift",
           JSON.stringify({
@@ -201,10 +221,7 @@ class DashboardPage extends React.Component {
       }
 
       this.setState({
-        todayInvoices: totalInvoices,
-        todayRevenue: totalRevenue,
-        totalProfit,
-        totalItems,
+        topProducts,
       });
 
       console.log(
@@ -212,6 +229,88 @@ class DashboardPage extends React.Component {
       );
     } catch (err) {
       console.warn("⚠️ loadShiftOrders error:", err);
+      this.setState({ todayInvoices: 0, todayRevenue: 0, totalProfit: 0 });
+    }
+  }
+  async loadAllOrders(shopId, token) {
+    try {
+      const res = await fetch(
+        `${API_URL}/api/orders?ShopId=${shopId}&page=1&pageSize=1000`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await this.safeParse(res);
+      const items = Array.isArray(json?.items)
+        ? json.items
+        : Array.isArray(json?.data?.items)
+          ? json.data.items
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json)
+              ? json
+              : [];
+
+      const successful = items.filter((o) => Number(o?.status ?? 0) === 1);
+
+      if (!successful.length) {
+        this.setState({ todayInvoices: 0, todayRevenue: 0, totalProfit: 0 });
+        return;
+      }
+
+      const totalRevenue = successful.reduce(
+        (sum, o) => sum + Number(o?.finalPrice ?? o?.totalPrice ?? 0),
+        0
+      );
+      const totalInvoices = successful.length;
+
+      let totalProfit = 0;
+      let allDetails = [];
+
+      for (const o of successful) {
+        const details = Array.isArray(o.orderDetails)
+          ? o.orderDetails
+          : Array.isArray(o.details)
+            ? o.details
+            : [];
+        allDetails.push(...details);
+        for (const d of details) {
+          const cost = Number(d.costPrice ?? 0);
+          const price = Number(d.price ?? d.unitPrice ?? 0);
+          totalProfit += (price - cost) * Number(d.quantity ?? 0);
+        }
+      }
+
+      // 🔹 Gom nhóm top sản phẩm
+      const productMap = {};
+      allDetails.forEach((d) => {
+        const pid = d.productId;
+        if (!pid) return;
+        if (!productMap[pid]) {
+          productMap[pid] = {
+            productName: d.productName || "Sản phẩm",
+            totalQuantitySold: 0,
+            averagePrice: Number(d.price ?? 0),
+          };
+        }
+        productMap[pid].totalQuantitySold += Number(d.quantity ?? 0);
+      });
+      const topProducts = Object.values(productMap)
+        .sort((a, b) => b.totalQuantitySold - a.totalQuantitySold)
+        .slice(0, 5);
+
+      this.setState({
+        todayInvoices: totalInvoices,
+        todayRevenue: totalRevenue,
+        totalProfit,
+        topProducts,
+      });
+
+      console.log(
+        `%c[ALL ORDERS]%c total=${totalInvoices} | revenue=${totalRevenue.toLocaleString()}₫ | profit=${totalProfit.toLocaleString()}₫`,
+        "color:#00A8B0;font-weight:700",
+        "color:inherit"
+      );
+    } catch (err) {
+      console.warn("⚠️ loadAllOrders error:", err);
       this.setState({ todayInvoices: 0, todayRevenue: 0, totalProfit: 0 });
     }
   }
@@ -232,148 +331,225 @@ class DashboardPage extends React.Component {
       const data = await this.safeParse(res);
       if (!data) return;
 
-      const daily = Array.isArray(data?.revenueStats?.dailyRevenues)
-        ? data.revenueStats.dailyRevenues
-        : [];
+      const revenueStats = data.revenueStats || {};
       const topProducts = Array.isArray(data?.topProducts)
         ? data.topProducts
         : [];
       const topCategories = Array.isArray(data?.topCategories)
         ? data.topCategories
         : [];
-      const totalProfit = Number(data?.revenueStats?.totalProfit ?? 0);
 
-      const revenueData = daily.map((d) => ({
-        day: new Date(d.date).toLocaleDateString("vi-VN", {
-          day: "2-digit",
-          month: "2-digit",
-        }),
-        value: Number(d.revenue || 0),
-      }));
+      // ✅ Lấy dữ liệu chính xác từ backend
+      const totalRevenue = Number(revenueStats.totalRevenue ?? 0);
+      const totalProfit = Number(revenueStats.totalProfit ?? 0);
+      const totalInvoices = Number(revenueStats.totalOrders ?? 0);
+      const totalProducts = Number(revenueStats.totalProductsSold ?? 0);
+
+      const revenueData = Array.isArray(revenueStats.dailyRevenues)
+        ? revenueStats.dailyRevenues.map((d) => ({
+            day: new Date(d.date).toLocaleDateString("vi-VN", {
+              day: "2-digit",
+              month: "2-digit",
+            }),
+            value: Number(d.revenue || 0),
+          }))
+        : [];
 
       this.setState({
         stats: data,
+        todayRevenue: totalRevenue,
+        todayInvoices: totalInvoices,
         totalProfit,
+        totalItems: totalProducts,
         topProducts,
         topCategories,
         revenueData,
       });
+
+      console.log(
+        `%c[Overview Stats]%c Orders=${totalInvoices} | Items=${totalProducts} | Revenue=${totalRevenue.toLocaleString()}₫ | Profit=${totalProfit.toLocaleString()}₫`,
+        "color:#00A8B0;font-weight:700",
+        "color:inherit"
+      );
     } finally {
       this.setState({ loading: false });
     }
   }
-  handleOpenShift = async () => {
+
+  handleOpenShift = () => {
+    this.props.navigate("/open-shift");
+  };
+  handleCloseShift = async () => {
+    if (!window.confirm("Bạn có chắc muốn đóng ca hiện tại không?")) return;
+
     const token = localStorage.getItem("accessToken");
     const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
     const shopId = Number(profile?.shopId || 0);
+    const { shiftId } = this.state;
 
-    try {
-      const res = await fetch(`${API_URL}/api/shifts/open-shift`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ shopId }),
-      });
-      const data = await res.json();
-      if (res.ok && data?.shiftId) {
-        alert("✅ Đã mở ca mới thành công!");
-        localStorage.setItem(
-          "currentShift",
-          JSON.stringify({
-            shiftId: data.shiftId,
-            status: "open",
-            openedAt: new Date().toISOString(),
-          })
-        );
-        this.setState({ shiftId: data.shiftId, shiftStatus: 1 });
-        await this.loadShiftStatus();
-      } else {
-        alert("⚠️ Mở ca thất bại!");
-      }
-    } catch (err) {
-      alert("❌ Không thể kết nối API mở ca!");
-      console.error(err);
-    }
-  };
-
-  handleCloseShift = async () => {
-    const {
-      shiftId,
-      user,
-      todayInvoices,
-      todayRevenue,
-      topProducts,
-      topCategories,
-      openedAt,
-      shiftStatus,
-    } = this.state;
-
-    if (!shiftId) {
-      alert("❌ Không tìm thấy ShiftId hợp lệ để đóng ca!");
+    if (!token || !shopId || !shiftId) {
+      alert("❌ Thiếu thông tin ca hoặc token!");
       return;
     }
-
-    if (shiftStatus === 2) {
-      this.props.navigate("/open-shift");
-      return;
-    }
-
-    const confirmClose = window.confirm("Bạn có chắc muốn đóng ca hiện tại?");
-    if (!confirmClose) return;
 
     try {
       this.setState({ closing: true });
-      const token = localStorage.getItem("accessToken");
 
+      // 🔴 1️⃣ Gọi API đóng ca
       const res = await fetch(`${API_URL}/api/shifts/close-shift`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ shiftId }),
+        body: JSON.stringify({ shopId, shiftId }),
       });
 
       const data = await res.json().catch(() => null);
+      console.log("🔴 CLOSE SHIFT RESPONSE:", data);
 
-      if (res.ok && (data?.status === 2 || data?.success)) {
-        alert("✅ Đã đóng ca thành công!");
-        this.setState({ shiftStatus: 2 });
-
-        const currentShift = JSON.parse(
-          localStorage.getItem("currentShift") || "{}"
+      if (!res.ok) {
+        alert(
+          `⚠️ Đóng ca thất bại!\nChi tiết: ${
+            data?.message || data?.error || "Không có phản hồi từ server"
+          }`
         );
-        localStorage.setItem(
-          "currentShift",
-          JSON.stringify({
-            ...currentShift,
-            status: "closed",
-            closedAt: new Date().toISOString(),
-          })
-        );
-
-        await printCloseShift({
-          user,
-          shiftId,
-          openedAt,
-          totalInvoices: todayInvoices,
-          totalRevenue: todayRevenue,
-          closedAt: new Date(),
-          topCategories,
-          topProducts,
-        });
-      } else {
-        alert("⚠️ API phản hồi không hợp lệ. Kiểm tra backend!");
+        return;
       }
+
+      alert("✅ Ca đã được đóng thành công!");
+
+      // 🧾 2️⃣ Gọi API lấy báo cáo chốt ca
+      const reportRes = await fetch(
+        `${API_URL}/api/reports/shift-close-report?shiftId=${shiftId}`,
+        {
+          headers: {
+            accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const reportData = await reportRes.json().catch(() => null);
+      console.log("🧾 Shift Close Report:", reportData);
+
+      if (!reportRes.ok || !reportData) {
+        alert("⚠️ Không thể lấy dữ liệu báo cáo chốt ca!");
+        return;
+      }
+
+      // 🧍‍♂️ 3️⃣ Gọi API users để tìm fullName theo userId
+      const usersRes = await fetch(`${API_URL}/api/users?ShopId=${shopId}`, {
+        headers: {
+          accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const usersData = await usersRes.json().catch(() => null);
+      const users = Array.isArray(usersData?.items)
+        ? usersData.items
+        : Array.isArray(usersData?.data)
+          ? usersData.data
+          : [];
+
+      const cashier =
+        users.find((u) => Number(u.userId) === Number(reportData.userId)) || {};
+
+      const fullName = cashier.fullName || "Thu ngân";
+      console.log("👤 Thu ngân:", fullName);
+
+      // 🧩 4️⃣ Gom dữ liệu in
+      const enrichedData = {
+        ...reportData,
+        userName: fullName,
+        shopName: profile?.shopName || "Cửa hàng",
+        shopAddress: profile?.shopAddress || "",
+      };
+
+      // 🖨️ 5️⃣ In bill chốt ca
+      await printCloseShiftHtml(enrichedData);
+
+      // 💾 6️⃣ Cập nhật trạng thái localStorage
+      localStorage.setItem(
+        "currentShift",
+        JSON.stringify({
+          shiftId,
+          status: "closed",
+          closedAt: new Date().toISOString(),
+        })
+      );
+
+      // 🔄 7️⃣ Refresh giao diện
+      this.setState({ shiftStatus: 2, closing: false });
+      await this.loadShiftStatus();
     } catch (err) {
-      alert("❌ Không thể kết nối API đóng ca!");
-      console.error(err);
+      console.error("❌ Lỗi đóng ca:", err);
+      alert("Không thể kết nối API đóng ca hoặc lấy báo cáo!");
     } finally {
       this.setState({ closing: false });
     }
   };
+
+  // handleOpenShift = async () => {
+  //   const token = localStorage.getItem("accessToken");
+  //   const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+  //   const shopId = Number(profile?.shopId || 0);
+
+  //   if (!token || !shopId) {
+  //     alert("❌ Thiếu thông tin đăng nhập hoặc cửa hàng!");
+  //     return;
+  //   }
+
+  //   try {
+  //     const res = await fetch(`${API_URL}/api/shifts/open-shift`, {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //         Authorization: `Bearer ${token}`,
+  //       },
+  //       body: JSON.stringify({ shopId }),
+  //     });
+
+  //     const data = await res.json().catch(() => null);
+  //     console.log("🟢 OPEN SHIFT RESPONSE:", data);
+
+  //     if (res.ok && data?.shiftId) {
+  //       alert("✅ Đã mở ca mới thành công!");
+  //       // 🔹 Lưu thông tin ca hiện tại
+  //       localStorage.setItem(
+  //         "currentShift",
+  //         JSON.stringify({
+  //           shiftId: data.shiftId,
+  //           status: "open",
+  //           openedAt: new Date().toISOString(),
+  //         })
+  //       );
+
+  //       // 🔹 Cập nhật UI
+  //       this.setState({
+  //         shiftId: data.shiftId,
+  //         shiftStatus: 1,
+  //         openedAt: new Date().toISOString(),
+  //       });
+
+  //       // 🔹 Tải lại trạng thái thực tế từ API (để đồng bộ)
+  //       await this.loadShiftStatus();
+
+  //       // 🔹 Điều hướng sang trang OpenShift để nhập tiền đầu ca
+  //       this.props.navigate("/open-shift");
+  //     } else {
+  //       alert(
+  //         `⚠️ Mở ca thất bại!\n\nChi tiết: ${
+  //           data?.message || data?.error || "Không có phản hồi từ server"
+  //         }`
+  //       );
+  //     }
+  //   } catch (err) {
+  //     alert("❌ Không thể kết nối API mở ca!");
+  //     console.error(err);
+  //   }
+  // };
 
   render() {
     const COLORS = ["#00A8B0", "#FF914D", "#FFCD56", "#4BC0C0", "#9966FF"];
@@ -391,7 +567,8 @@ class DashboardPage extends React.Component {
       loading,
     } = this.state;
 
-    const isClosed = shiftStatus === 2;
+    const isClosed = shiftStatus !== 1;
+
     const hasData =
       todayRevenue > 0 ||
       todayInvoices > 0 ||
@@ -511,10 +688,21 @@ class DashboardPage extends React.Component {
                     {/* 🔹 Tổng doanh thu giữa chart */}
                     <div className="absolute text-center">
                       <p className="text-sm text-gray-500">Tổng cộng</p>
+
+                      {/* ✅ Dùng dữ liệu thật từ topCategories nếu có */}
                       <p className="text-lg font-bold text-[#00A8B0]">
-                        {todayRevenue > 0
-                          ? `${(todayRevenue / 1_000_000).toFixed(1)}M VND`
-                          : "0 VND"}
+                        {(() => {
+                          const total =
+                            topCategories.length > 0
+                              ? topCategories.reduce(
+                                  (sum, c) => sum + Number(c.totalRevenue || 0),
+                                  0
+                                )
+                              : todayRevenue;
+                          return total > 0
+                            ? `${(total / 1_000_000).toFixed(1)}M VND`
+                            : "0 VND";
+                        })()}
                       </p>
                     </div>
                   </div>
@@ -558,9 +746,7 @@ class DashboardPage extends React.Component {
                         <ChartBar className="w-5 h-5" /> Tổng hàng bán
                       </div>
                       <p className="text-2xl font-bold text-[#007E85] mt-1">
-                        {topProducts
-                          .reduce((s, p) => s + (p.totalQuantitySold || 0), 0)
-                          .toLocaleString("vi-VN")}
+                        {(this.state.totalItems || 0).toLocaleString("vi-VN")}
                       </p>
                     </div>
                     <div>

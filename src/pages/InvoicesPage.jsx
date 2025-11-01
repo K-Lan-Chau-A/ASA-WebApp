@@ -134,7 +134,7 @@ export default class InvoicesPage extends React.Component {
     try {
       this.setState({ loading: true });
       const url = `${API_URL}/api/orders?ShopId=${shopId}${
-        selectedShift ? `&ShiftId=${selectedShift}` : ""
+        selectedShift > 0 ? `&ShiftId=${selectedShift}` : ""
       }&page=1&pageSize=100`;
 
       const res = await fetch(url, {
@@ -429,11 +429,50 @@ export default class InvoicesPage extends React.Component {
                 className="h-11 rounded-xl border border-gray-300 px-3 text-gray-700 bg-white/80 focus:outline-none"
               >
                 <option value={0}>Tất cả ca</option>
-                {this.state.shifts.map((s) => (
-                  <option key={s.shiftId} value={s.shiftId}>
-                    Ca #{s.shiftId} – {s.status === 1 ? "Đang mở" : "Đã đóng"}
-                  </option>
-                ))}
+                {this.state.shifts.map((s) => {
+                  const openTime = s.openedAt
+                    ? new Date(s.openedAt).toLocaleTimeString("vi-VN", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "--:--";
+                  const closeTime = s.closedAt
+                    ? new Date(s.closedAt).toLocaleTimeString("vi-VN", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : null;
+
+                  const label =
+                    s.status === 1
+                      ? `Mở: ${openTime} • (Đang mở)`
+                      : `Mở: ${openTime} • Đóng: ${closeTime || "--:--"}`;
+
+                  return (
+                    <option key={s.shiftId} value={s.shiftId}>
+                      {`Mở: ${new Date(s.startDate).toLocaleString("vi-VN", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })} ${
+                        s.status === 1
+                          ? "• (Đang mở)"
+                          : s.closedDate
+                            ? `• Đóng: ${new Date(s.closedDate).toLocaleString(
+                                "vi-VN",
+                                {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                }
+                              )}`
+                            : ""
+                      }`}
+                    </option>
+                  );
+                })}
               </select>
 
               <div className="relative">

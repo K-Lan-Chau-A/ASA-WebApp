@@ -333,8 +333,8 @@ class RankPageClass extends React.Component {
                       <div className="flex items-center gap-1">
                         <span>
                           {r.threshold
-                            ? `Ngưỡng áp dụng: ${fmt.format(r.threshold)}₫`
-                            : "Ngưỡng áp dụng: Không giới hạn"}
+                            ? `Ngưỡng tiêu dùng: ${fmt.format(r.threshold)}₫`
+                            : "Ngưỡng tiêu dùng: Không giới hạn"}
                         </span>
                       </div>
                     </div>

@@ -340,8 +340,9 @@ export default class UserFeaturePage extends React.Component {
                 variant="outline"
                 className="flex-1 border-[#00A8B0] text-[#00A8B0]"
                 onClick={(e) => {
-                  e.stopPropagation(); // ❗ tránh bị click card
+                  e.stopPropagation();
                   this.openEditModal(u);
+                  this.loadUserFeatures(u);
                 }}
               >
                 <Edit className="w-4 h-4 mr-1" /> Sửa
@@ -353,8 +354,9 @@ export default class UserFeaturePage extends React.Component {
                 variant="destructive"
                 className="flex-1 bg-red-500 text-white hover:bg-red-600"
                 onClick={(e) => {
-                  e.stopPropagation(); // ❗ tránh bị click card
-                  this.deleteUser(u.userId);
+                  e.stopPropagation();
+                  this.openEditModal(u);
+                  this.loadUserFeatures(u);
                 }}
               >
                 <Trash2 className="w-4 h-4 mr-1" /> Xóa
@@ -372,50 +374,162 @@ export default class UserFeaturePage extends React.Component {
     );
   }
 
-  renderFeatureList() {
-    const { features, userFeatures, selectedUser } = this.state;
-    if (!selectedUser) return null;
+  renderEditModalCombined() {
+    const { showEditModal, editData, editingUser, features, userFeatures } =
+      this.state;
+    if (!showEditModal || !editingUser) return null;
+
+    const previewImage = editData.avatarFile
+      ? URL.createObjectURL(editData.avatarFile)
+      : editingUser.avatar || "https://placehold.co/100x100?text=User";
+
     return (
-      <div className="border-t pt-6">
-        <h2 className="text-2xl font-semibold mb-6 text-[#007E85] flex items-center gap-2">
-          <UserCog className="w-6 h-6 text-[#00A8B0]" />
-          Quyền của {selectedUser.fullName || selectedUser.username}
-        </h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {features.map((f) => (
-            <label
-              key={f.featureId}
-              className="flex items-center gap-3 bg-white border rounded-xl px-4 py-3"
-            >
-              <input
-                type="checkbox"
-                checked={!!userFeatures[f.featureId]}
+      <div className="fixed inset-0 bg-black/40 z-[999] flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden animate-fade-in">
+          {/* Header */}
+          <div className="flex justify-between items-center px-6 py-4 border-b">
+            <h2 className="font-bold text-[#007E85] text-xl flex items-center gap-2">
+              <UserCog className="w-5 h-5 text-[#00A8B0]" />
+              Chỉnh sửa nhân viên & quyền truy cập
+            </h2>
+            <X
+              className="w-5 h-5 cursor-pointer hover:text-red-500 transition"
+              onClick={() =>
+                this.setState({
+                  showEditModal: false,
+                  editData: {
+                    fullName: "",
+                    phoneNumber: "",
+                    citizenIdNumber: "",
+                    avatarFile: null,
+                  },
+                  editingUser: null,
+                  features: [],
+                  userFeatures: {},
+                })
+              }
+            />
+          </div>
+
+          {/* Body */}
+          <div className="grid grid-cols-2 gap-6 px-6 py-6 max-h-[80vh] overflow-y-auto">
+            {/* Cột trái: Thông tin nhân viên */}
+            <div className="space-y-4">
+              <div className="flex flex-col items-center">
+                <img
+                  src={previewImage}
+                  alt="avatar"
+                  className="w-24 h-24 rounded-full object-cover border-2 border-[#00A8B0]"
+                />
+                <label className="mt-3 text-sm font-medium text-gray-600">
+                  Thay ảnh đại diện
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) =>
+                    this.setState({
+                      editData: { ...editData, avatarFile: e.target.files[0] },
+                    })
+                  }
+                  className="block w-full text-sm border rounded-md p-2 mt-2"
+                />
+              </div>
+
+              <Input
+                placeholder="Họ tên"
+                value={editData.fullName}
                 onChange={(e) =>
-                  this.setState((prev) => ({
-                    userFeatures: {
-                      ...prev.userFeatures,
-                      [f.featureId]: e.target.checked,
-                    },
-                  }))
+                  this.setState({
+                    editData: { ...editData, fullName: e.target.value },
+                  })
                 }
-                className="w-4 h-4 accent-[#00A8B0]"
               />
-              <span>{f.featureName}</span>
-            </label>
-          ))}
-        </div>
-        <div className="mt-8 flex justify-end">
-          <Button
-            onClick={() => this.saveUserFeatures()}
-            className="bg-[#00A8B0] text-white px-6"
-          >
-            💾 Lưu thay đổi
-          </Button>
+              <Input
+                placeholder="Số điện thoại"
+                value={editData.phoneNumber}
+                onChange={(e) =>
+                  this.setState({
+                    editData: { ...editData, phoneNumber: e.target.value },
+                  })
+                }
+              />
+              <Input
+                placeholder="CMND/CCCD"
+                value={editData.citizenIdNumber}
+                onChange={(e) =>
+                  this.setState({
+                    editData: { ...editData, citizenIdNumber: e.target.value },
+                  })
+                }
+              />
+            </div>
+
+            {/* Cột phải: Quyền truy cập */}
+            <div>
+              <h3 className="font-semibold text-lg text-[#007E85] mb-3">
+                Quyền truy cập
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {features.map((f) => (
+                  <label
+                    key={f.featureId}
+                    className="flex items-center gap-3 bg-gray-50 border rounded-xl px-4 py-3"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!userFeatures[f.featureId]}
+                      onChange={(e) =>
+                        this.setState((prev) => ({
+                          userFeatures: {
+                            ...prev.userFeatures,
+                            [f.featureId]: e.target.checked,
+                          },
+                        }))
+                      }
+                      className="w-4 h-4 accent-[#00A8B0]"
+                    />
+                    <span>{f.featureName}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50">
+            <Button
+              variant="outline"
+              className="rounded-lg text-gray-600"
+              onClick={() =>
+                this.setState({
+                  showEditModal: false,
+                  editingUser: null,
+                  editData: {
+                    fullName: "",
+                    phoneNumber: "",
+                    citizenIdNumber: "",
+                  },
+                })
+              }
+            >
+              Hủy
+            </Button>
+            <Button
+              className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
+              onClick={() => this.saveUserAndFeatures()}
+            >
+              💾 Lưu thay đổi
+            </Button>
+          </div>
         </div>
       </div>
     );
   }
-
+  async saveUserAndFeatures() {
+    await this.updateUser();
+    await this.saveUserFeatures();
+  }
   renderAddModal() {
     const { showAddModal, newStaff } = this.state;
     if (!showAddModal) return null;
@@ -559,127 +673,6 @@ export default class UserFeaturePage extends React.Component {
     );
   }
 
-  renderEditModal() {
-    const { showEditModal, editData, editingUser } = this.state;
-    if (!showEditModal || !editingUser) return null;
-
-    // ✅ Ưu tiên preview ảnh mới nếu có, nếu không thì ảnh gốc từ API
-    const previewImage = editData.avatarFile
-      ? URL.createObjectURL(editData.avatarFile)
-      : editingUser.avatar || "https://placehold.co/100x100?text=User";
-
-    return (
-      <div className="fixed inset-0 bg-black/40 z-[999] flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
-          {/* Header */}
-          <div className="flex justify-between items-center px-5 py-4 border-b">
-            <h2 className="font-bold text-[#007E85] text-lg flex items-center gap-2">
-              <Edit className="w-5 h-5 text-[#00A8B0]" />
-              Chỉnh sửa nhân viên
-            </h2>
-            <X
-              className="w-5 h-5 cursor-pointer hover:text-red-500 transition"
-              onClick={() =>
-                this.setState({
-                  showEditModal: false,
-                  editData: {
-                    fullName: "",
-                    phoneNumber: "",
-                    citizenIdNumber: "",
-                    avatarFile: null,
-                  },
-                  editingUser: null,
-                })
-              }
-            />
-          </div>
-
-          {/* Body */}
-          <div className="px-5 py-5 space-y-4">
-            {/* Avatar hiển thị */}
-            <div className="flex flex-col items-center">
-              <img
-                src={previewImage}
-                alt="avatar"
-                className="w-24 h-24 rounded-full object-cover border-2 border-[#00A8B0] shadow-sm"
-              />
-              <label className="mt-3 text-sm font-medium text-gray-600">
-                Thay ảnh đại diện
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) =>
-                  this.setState({
-                    editData: { ...editData, avatarFile: e.target.files[0] },
-                  })
-                }
-                className="block w-full text-sm text-gray-600 border border-gray-300 rounded-md p-2 mt-1"
-              />
-            </div>
-
-            {/* Thông tin cơ bản */}
-            <Input
-              placeholder="Họ tên"
-              value={editData.fullName}
-              onChange={(e) =>
-                this.setState({
-                  editData: { ...editData, fullName: e.target.value },
-                })
-              }
-            />
-            <Input
-              placeholder="Số điện thoại"
-              value={editData.phoneNumber}
-              onChange={(e) =>
-                this.setState({
-                  editData: { ...editData, phoneNumber: e.target.value },
-                })
-              }
-            />
-            <Input
-              placeholder="CMND/CCCD"
-              value={editData.citizenIdNumber}
-              onChange={(e) =>
-                this.setState({
-                  editData: { ...editData, citizenIdNumber: e.target.value },
-                })
-              }
-            />
-          </div>
-
-          {/* Footer */}
-          <div className="flex justify-end gap-3 px-5 py-4 border-t bg-gray-50">
-            <Button
-              variant="outline"
-              className="rounded-lg text-gray-600"
-              onClick={() =>
-                this.setState({
-                  showEditModal: false,
-                  editData: {
-                    fullName: "",
-                    phoneNumber: "",
-                    citizenIdNumber: "",
-                    avatarFile: null,
-                  },
-                  editingUser: null,
-                })
-              }
-            >
-              Hủy
-            </Button>
-            <Button
-              className="bg-[#00A8B0] text-white rounded-lg px-6 py-2 hover:bg-[#00929A]"
-              onClick={() => this.updateUser()}
-            >
-              💾 Lưu thay đổi
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   render() {
     const { loading } = this.state;
     return (
@@ -693,9 +686,8 @@ export default class UserFeaturePage extends React.Component {
           )}
           {this.renderHeader()}
           {this.renderUserList()}
-          {this.renderFeatureList()}
           {this.renderAddModal()}
-          {this.renderEditModal()}
+          {this.renderEditModalCombined()}
         </div>
       </div>
     );

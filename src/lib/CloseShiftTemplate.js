@@ -1,115 +1,95 @@
-import PrintService from "@/services/PrintService";
+import PrintTemplate from "./PrintTemplate";
 
-/**
- * In báo cáo chốt ca (Close Shift Report)
- * ----------------------------------------
- * @param {{
- *   user: { fullName?: string, username?: string, shopName?: string },
- *   shiftId: number,
- *   totalInvoices: number,
- *   totalRevenue: number,
- *   closedAt: Date,
- *   topCategories?: Array<{ categoryName: string, totalRevenue: number }>,
- *   topProducts?: Array<{ productName: string, totalQuantitySold: number }>,
- * }} data
- */
-export async function printCloseShift(data) {
-  try {
-    const {
-      user = {},
-      shiftId,
-      totalInvoices = 0,
-      totalRevenue = 0,
-      closedAt = new Date(),
-      topCategories = [],
-      topProducts = [],
-    } = data;
+export async function buildCloseShiftHTML(data = {}) {
+  const {
+    shiftId = "---",
+    startDate,
+    closedDate,
+    userName = "Nhân viên",
+    openingCash = 0,
+    grossRevenueTotal = 0,
+    programDiscountsTotal = 0,
+    manualDiscountAmount = 0,
+    netRevenue = 0,
+    orderCount = 0,
+    guestCount = 0,
+    theoreticalCashInDrawer = 0,
+    paymentMethods = [],
+    productGroups = [],
+  } = data;
 
-    const shopName = (user.shopName || "CỬA HÀNG").toUpperCase();
-    const staffName = user.fullName || user.username || "NHÂN VIÊN";
-    const timeStr = new Date(closedAt).toLocaleString("vi-VN");
-    const line = "-".repeat(32);
+  const fmt = new Intl.NumberFormat("vi-VN");
 
-    // Helpers
-    const center = (text) => {
-      const space = Math.max(0, Math.floor((32 - text.length) / 2));
-      return " ".repeat(space) + text;
-    };
-    const pad = (left, right) => {
-      const total = 32;
-      const text = left + " ".repeat(Math.max(1, total - left.length - right.length)) + right;
-      return text.slice(0, total);
-    };
+  const paymentHtml = paymentMethods.length
+    ? paymentMethods
+        .map(
+          (pm) => `
+            <div class="flex justify-between">
+              <span>${pm.method}</span>
+              <span>${fmt.format(pm.amount)}đ</span>
+            </div>
+          `
+        )
+        .join("")
+    : "<div>Không có phương thức thanh toán</div>";
 
-    // Header
-    let content = "";
-    content += center("********** CHỐT CA **********") + "\n\n";
-    content += center(shopName) + "\n";
-    content += line + "\n";
-    content += pad("Ca làm:", `#${shiftId}`) + "\n";
-    content += pad("Nhân viên:", staffName) + "\n";
-    content += pad("Thời gian:", timeStr) + "\n";
-    content += line + "\n";
-    content += pad("Tổng hóa đơn:", totalInvoices.toLocaleString("vi-VN")) + "\n";
-    content += pad(
-      "Tổng doanh thu:",
-      totalRevenue.toLocaleString("vi-VN") + "đ"
-    ) + "\n";
-    content += line + "\n\n";
+  const productsHtml = productGroups.length
+    ? productGroups
+        .map(
+          (p) => `
+            <div class="flex justify-between">
+              <span>${p.productName} (x${p.quantity})</span>
+              <span>${fmt.format(p.revenue)}đ</span>
+            </div>
+          `
+        )
+        .join("")
+    : "<div>Không có sản phẩm</div>";
 
-    // Top Categories (optional)
-    if (topCategories.length > 0) {
-      content += center("🔹 Doanh thu theo danh mục") + "\n";
-      topCategories.forEach((c) => {
-        const name = c.categoryName?.slice(0, 18) || "Khác";
-        const val = (c.totalRevenue || 0).toLocaleString("vi-VN");
-        content += pad(name, val) + "\n";
-      });
-      content += line + "\n";
-    }
-
-    // Top Products (optional)
-    if (topProducts.length > 0) {
-      content += center("🏆 Sản phẩm bán chạy") + "\n";
-      topProducts.slice(0, 4).forEach((p) => {
-        const name = p.productName?.slice(0, 18) || "SP";
-        const qty = (p.totalQuantitySold || 0).toString();
-        content += pad(name, qty + " sp") + "\n";
-      });
-      content += line + "\n";
-    }
-
-    // Footer
-    content += center("CẢM ƠN BẠN ĐÃ LÀM VIỆC CHĂM CHỈ 💪") + "\n";
-    content += center("HẸN GẶP LẠI TRONG CA TIẾP THEO") + "\n\n";
-    content += center("********************************") + "\n\n\n";
-
-    // 🖨️ Gửi đến PrintService
-    const printer = new PrintService("auto", { ip: "192.168.1.107", port: 9100 });
-
-    if (printer.env === "web") {
-      // Trường hợp chạy trong trình duyệt: in popup
-      const html = `
-        <html><head><style>
-        @page { size: 80mm auto; margin: 0; }
-        body { font-family: monospace; width: 80mm; padding: 4px;
-               line-height: 1.4; font-size: 13px; white-space: pre; }
-        </style></head>
-        <body>${content.replace(/\n/g, "<br>")}</body>
-        <script>
-          window.onload = () => { window.print(); setTimeout(() => window.close(), 500); };
-        </script></html>`;
-      const w = window.open("", "_blank", "width=400,height=600");
-      w.document.write(html);
-      w.document.close();
-    } else {
-      // Electron / Node / LAN / USB
-      await printer.driver.print(content);
-    }
-
-    console.log("[CloseShiftTemplate] ✅ In báo cáo chốt ca thành công!");
-  } catch (err) {
-    console.error("[CloseShiftTemplate] ❌ Lỗi in:", err);
-    alert("Không thể in báo cáo chốt ca: " + (err.message || err));
-  }
+  return `
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <title>Báo cáo chốt ca</title>
+      <style>
+        body { font-family: "Arial", sans-serif; font-size: 14px; }
+        .center { text-align: center; }
+        .flex { display: flex; justify-content: space-between; }
+        hr { border: none; border-top: 1px dashed #999; margin: 6px 0; }
+      </style>
+    </head>
+    <body>
+      <div class="center">
+        <h3>TẠP HÓA MINH HẠNH</h3>
+        <div>123 Đường Nguyễn Văn Cừ, Quận 5, TP.HCM</div>
+        <b>BÁO CÁO CHỐT CA</b>
+      </div>
+      <hr/>
+      <div>Mã ca: ${shiftId}</div>
+      <div>Thời gian mở: ${startDate ? new Date(startDate).toLocaleString("vi-VN") : "-"}</div>
+      <div>Thời gian đóng: ${closedDate ? new Date(closedDate).toLocaleString("vi-VN") : "-"}</div>
+      <div>Thu ngân: ${userName}</div>
+      <hr/>
+      <div class="flex"><span>Số dư đầu ca:</span><span>${fmt.format(openingCash)}đ</span></div>
+      <div class="flex"><span>Doanh thu (Gross):</span><span>${fmt.format(grossRevenueTotal)}đ</span></div>
+      <div class="flex"><span>Giảm giá:</span><span>-${fmt.format(programDiscountsTotal + manualDiscountAmount)}đ</span></div>
+      <div class="flex"><span>Doanh thu (Net):</span><span>${fmt.format(netRevenue)}đ</span></div>
+      <div class="flex"><span>Tổng đơn hàng:</span><span>${orderCount}</span></div>
+      <div class="flex"><span>Tổng khách:</span><span>${guestCount}</span></div>
+      <div class="flex"><span>Tiền trong két:</span><span>${fmt.format(theoreticalCashInDrawer)}đ</span></div>
+      <hr/>
+      <div><b>Phương thức thanh toán:</b></div>
+      ${paymentHtml}
+      <hr/>
+      <div><b>Sản phẩm bán chạy:</b></div>
+      ${productsHtml}
+      <hr/>
+      <div class="center">
+        <small>In lúc: ${new Date().toLocaleString("vi-VN")}</small><br/>
+        <b>CẢM ƠN BẠN ĐÃ SỬ DỤNG ASA POS!</b><br/>
+        <small>Powered by ASA POS</small>
+      </div>
+    </body>
+    </html>
+  `;
 }

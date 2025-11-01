@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import API_URL from "@/config/api";
 import PrintService from "@/services/PrintService";
+import PrintTemplate from "@/lib/PrintTemplate";
+
 import { toast } from "@/components/ui/use-toast";
 
 const fmt = new Intl.NumberFormat("vi-VN");
@@ -73,6 +75,7 @@ class PaymentPageClass extends React.Component {
     voucherInfo: null,
     voucherDiscount: 0,
     manualDiscountPercent: 0,
+    isSendInvoice: false,
   };
 
   _isPaid = false;
@@ -82,8 +85,10 @@ class PaymentPageClass extends React.Component {
 
   componentDidMount() {
     const cached = localStorage.getItem("lastOrderCache");
+    let parsed = null;
+
     if (cached) {
-      const parsed = JSON.parse(cached);
+      parsed = JSON.parse(cached);
       const orders = (parsed.orders || []).map((o) => ({
         ...o,
         basePrice: Number(o.basePrice || o.price || 0),
@@ -97,6 +102,11 @@ class PaymentPageClass extends React.Component {
         customerName: parsed.customer?.fullName || "Khách lẻ",
         note: parsed.note || "",
       });
+    }
+
+    // ✅ di chuyển ra ngoài, thêm kiểm tra parsed != null
+    if (parsed?.customer?.customerId) {
+      this.fetchCustomerRankBenefit(parsed.customer.customerId);
     }
   }
 
@@ -244,7 +254,7 @@ class PaymentPageClass extends React.Component {
     setTimeout(() => this.setState({ toastMsg: "" }), ms);
   };
 
-  showPaidAndGo = async () => {
+  async showPaidAndGo() {
     this._isPaid = true;
     this.setState({
       customerId: null,
@@ -286,14 +296,24 @@ class PaymentPageClass extends React.Component {
       voucherInfo: this.state.voucherInfo || null,
     };
 
+    // 🩵 FIX 1 — import động PrintTemplate
+    const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
     const shop = await PrintTemplate.getShopInfo();
+
     const printer = new PrintService("lan", {
       ip: "192.168.1.107",
       port: 9100,
     });
-    await printer.printOrder(order, shop).catch(console.error);
+    await printer.printOrder(order, shop).catch((e) => {
+      console.warn("[Payment] Lỗi in:", e.message);
+      toast({
+        title: "⚠️ In hóa đơn thất bại",
+        description: "Trình duyệt chặn cửa sổ in hoặc không tìm thấy máy in.",
+      });
+    });
 
-    this.stoast({
+    // 🩵 FIX 2 — Dùng toast() đúng chuẩn
+    toast({
       title: "✅ Thanh toán thành công!",
       description: `Đơn hàng #${orderId} đã được lưu và in hóa đơn.`,
       duration: 3000,
@@ -301,7 +321,7 @@ class PaymentPageClass extends React.Component {
 
     localStorage.setItem("resetCustomer", "1");
     setTimeout(() => this.props.navigate("/orders"), 800);
-  };
+  }
 
   getAuthContext() {
     let profile = null;
@@ -368,6 +388,8 @@ class PaymentPageClass extends React.Component {
       const payload = this.buildPayload();
 
       payload.status = 0;
+      localStorage.removeItem("lastOrderResponse");
+      localStorage.removeItem("lastOrderCache");
 
       const res = await fetch(`${API_URL}/api/orders`, {
         method: "POST",
@@ -500,6 +522,7 @@ class PaymentPageClass extends React.Component {
     }
   }
   async fetchCustomerNameById(customerId) {
+    await this.fetchCustomerRankBenefit(customerId);
     if (!customerId) return;
     const token = localStorage.getItem("accessToken") || "";
     const url = `${API_URL}/api/customers?CustomerId=${customerId}`;
@@ -525,6 +548,93 @@ class PaymentPageClass extends React.Component {
       }
     } catch (e) {
       console.warn("fetchCustomerNameById failed:", e?.message || e);
+    }
+  }
+  async fetchCustomerRankBenefit(customerId) {
+    console.log(
+      "[Payment] 🔍 GỌI HÀM fetchCustomerRankBenefit với customerId =",
+      customerId
+    );
+    if (!customerId) return;
+
+    const token = localStorage.getItem("accessToken") || "";
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = profile?.shopId || 0;
+
+    try {
+      // 🔹 1. Lấy thông tin khách hàng
+      const resCus = await fetch(
+        `${API_URL}/api/customers?CustomerId=${customerId}&ShopId=${shopId}`,
+        {
+          headers: {
+            accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }
+      );
+      const dataCus = await this.safeParse(resCus);
+      const customer = Array.isArray(dataCus?.items)
+        ? dataCus.items[0]
+        : dataCus;
+      const rankId = Number(customer?.rankid || customer?.rankId || 0);
+
+      console.log(
+        "[Payment] 🧩 rankId của KH:",
+        rankId,
+        "Tên:",
+        customer?.fullName
+      );
+
+      if (!rankId) {
+        console.warn("[Payment] ⚠️ KH chưa có rankId hợp lệ");
+        return;
+      }
+
+      // 🔹 2. Lấy toàn bộ bảng rank
+      const resRank = await fetch(
+        `${API_URL}/api/ranks?ShopId=${shopId}&page=1&pageSize=50`,
+        {
+          headers: {
+            accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }
+      );
+      const dataRank = await this.safeParse(resRank);
+      const ranks = Array.isArray(dataRank?.items) ? dataRank.items : [];
+
+      // 🔹 3. Tìm rank khớp với rankId của khách hàng
+      const rankItem = ranks.find(
+        (r) => Number(r.rankId || r.id || 0) === rankId
+      );
+
+      if (!rankItem) {
+        console.warn(`[Payment] ⚠️ Không tìm thấy rank tương ứng: ${rankId}`);
+        console.log(
+          "Danh sách rank có:",
+          ranks.map((r) => r.rankId)
+        );
+        return;
+      }
+
+      const benefit = Number(rankItem.benefit || 0);
+      const discountValue = this.subtotal() * benefit;
+
+      console.log(
+        `[Payment] ✅ FETCH RANK THÀNH CÔNG:`,
+        rankItem.rankName,
+        benefit,
+        discountValue
+      );
+
+      // 🔹 4. Lưu vào state
+      this.setState({
+        rankName: rankItem.rankName || "Thành viên",
+        rankBenefit: benefit,
+        rankDiscountValue: discountValue,
+      });
+    } catch (e) {
+      console.error("[Payment] ❌ LỖI FETCH RANK:", e);
     }
   }
 
@@ -574,112 +684,90 @@ class PaymentPageClass extends React.Component {
   async buildFullPayload(orderId, overrides = {}) {
     const head = (await this.fetchOrderHead(orderId)) || {};
     const last = this.getLastOrderCache() || {};
+    const { shopId, shiftId } = this.getAuthContext();
 
     let details = (this.state.orders || []).map((it) => ({
       quantity: Number(it.qty || 0),
       productUnitId: Number(it.productUnitId || 0),
       productId: Number(it.id || 0),
     }));
-
-    if (
-      !details.length &&
-      Array.isArray(last.orderDetails) &&
-      last.orderDetails.length
-    ) {
-      details = last.orderDetails.map((d) => ({
-        quantity: Number(d.quantity ?? d.qty ?? 0),
-        productUnitId: Number(d.productUnitId ?? 0),
-        productId: Number(d.productId ?? d.id ?? 0),
-      }));
-    }
-
     if (!details.length) {
-      const token = localStorage.getItem("accessToken") || "";
-      const url = `${API_URL}/api/order-details?OrderId=${orderId}&page=1&pageSize=5000`;
-      try {
-        const res = await fetch(url, {
-          headers: {
-            accept: "*/*",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-        });
-        const data = await this.safeParse(res);
-        if (res.ok) {
-          const items = Array.isArray(data?.items) ? data.items : [];
-          details = items.map((d) => ({
-            quantity: Number(d.quantity ?? 0),
-            productUnitId: Number(d.productUnitId ?? 0),
-            productId: Number(d.productId ?? 0),
-          }));
-        }
-      } catch {}
+      details = [
+        {
+          quantity: 0,
+          productUnitId: 0,
+          productId: 0,
+        },
+      ];
     }
-
-    const { shopId, shiftId } = this.getAuthContext();
-
-    const rawPm =
-      overrides.paymentMethod ??
-      head?.paymentMethod ??
-      last?.paymentMethod ??
-      this.state.payMethodId ??
-      METHOD_MAP[this.state.activeTab] ??
-      1;
-
-    const paymentMethod = Number(this.normalizePaymentMethod(rawPm) || 0);
-
-    const rawCustomerId =
-      overrides.customerId ??
-      head?.customerId ??
-      last?.customerId ??
-      this.state.customerId ??
-      null;
-
-    const customerId =
-      rawCustomerId != null && !Number.isNaN(Number(rawCustomerId))
-        ? Number(rawCustomerId)
-        : null;
 
     const payload = {
-      customerId,
-      paymentMethod,
-      isSendInvoice: overrides.isSendInvoice ?? false,
-      status: overrides.status ?? head?.status ?? last?.status ?? 0,
-      shopId: Number(overrides.shopId ?? shopId ?? head?.shopId ?? 0),
-      shiftId: Number(overrides.shiftId ?? shiftId ?? head?.shiftId ?? 0),
-      voucherId: overrides.voucherId ?? head?.voucherId ?? last?.voucherId ?? 0,
+      customerId:
+        Number(
+          overrides.customerId ??
+            this.state.customerId ??
+            head.customerId ??
+            last.customerId ??
+            0
+        ) || null,
+      paymentMethod:
+        Number(
+          this.normalizePaymentMethod(
+            overrides.paymentMethod ??
+              this.state.payMethodId ??
+              head.paymentMethod ??
+              last.paymentMethod ??
+              1
+          )
+        ) || 1,
+      rankBenefit: this.state.rankBenefit || 0,
+      rankDiscountValue: this.state.rankDiscountValue || 0,
+      rankName: this.state.rankName || "",
+
+      status: Number(overrides.status ?? head.status ?? last.status ?? 0),
+      shiftId: Number(overrides.shiftId ?? shiftId ?? head.shiftId ?? 0) || 0,
+      shopId: Number(overrides.shopId ?? shopId ?? head.shopId ?? 0) || 0,
+      voucherId:
+        overrides.voucherId != null
+          ? Number(overrides.voucherId)
+          : head.voucherId != null
+            ? Number(head.voucherId)
+            : last.voucherId != null
+              ? Number(last.voucherId)
+              : null,
+
       discount: Number(
-        overrides.discount ?? head?.discount ?? last?.discount ?? 0
+        overrides.discount ??
+          this.state.manualDiscountPercent ??
+          head.discount ??
+          last.discount ??
+          0
       ),
-      note: overrides.note ?? this.state.note ?? head?.note ?? last?.note ?? "",
+      note: String(overrides.note ?? this.state.note ?? head.note ?? "string"),
+      isSendInvoice:
+        overrides.isSendInvoice ??
+        this.state.isSendInvoice ??
+        head.isSendInvoice ??
+        last.isSendInvoice ??
+        false,
+
       orderDetails: details,
     };
 
-    // ✅ Dọn sạch field null/undefined
-    Object.keys(payload).forEach((k) => {
-      if (payload[k] === undefined || payload[k] === "null") delete payload[k];
-    });
-
-    log("buildFullPayload:", payload);
+    log("✅ buildFullPayload (Swagger format):", payload);
     return payload;
   }
 
-  /* ---------- PUT đầy đủ khi đổi phương thức thanh toán ---------- */
+  /* ---------- PUT nhẹ khi đổi phương thức thanh toán ---------- */
   ensurePaymentMethod = async (orderId, pm) => {
     if (!orderId || !pm) return;
     const token = localStorage.getItem("accessToken") || "";
 
     try {
-      // 🟢 Build payload đầy đủ (bao gồm shopId, shiftId, orderDetails, ...)
       const payload = await this.buildFullPayload(orderId, {
         paymentMethod: pm,
-        status: 0,
-        note: this.state.note || "",
-        isSendInvoice: true, // ✅ bắt buộc theo Swagger
-      });
-
-      // 🔹 Loại bỏ field null/undefined để tránh lỗi
-      Object.keys(payload).forEach((k) => {
-        if (payload[k] == null) delete payload[k];
+        isSendInvoice: this.state.isSendInvoice,
+        status: this.state.status === 1 ? 0 : (this.state.status ?? 0),
       });
 
       const url = `${API_URL}/api/orders/${orderId}`;
@@ -697,7 +785,7 @@ class PaymentPageClass extends React.Component {
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
       this.setState({ payMethodId: pm });
-      log(`✅ Cập nhật paymentMethod=${pm} cho order #${orderId}`, payload);
+      log(`✅ PUT /api/orders/${orderId} (method change)`, payload);
     } catch (e) {
       err("ensurePaymentMethod failed:", e?.message || e);
       this.showToast("❌ Lỗi cập nhật phương thức thanh toán");
@@ -895,7 +983,10 @@ class PaymentPageClass extends React.Component {
     }
 
     const pm = METHOD_MAP[tab] ?? null;
-    if (oid && pm) await this.ensurePaymentMethod(oid, pm);
+    if (oid && pm && pm !== this.state.payMethodId) {
+      await this.ensurePaymentMethod(oid, pm);
+    }
+
     if (tab === "qr") await this.initQRFlow();
     else this.stopPolling();
   };
@@ -933,7 +1024,7 @@ class PaymentPageClass extends React.Component {
       shopId: shopId ?? null,
       voucherId: this.state.voucherInfo?.voucherId || null,
       discount: manualPercent,
-      isSendInvoice: false,
+      isSendInvoice: this.state.isSendInvoice,
       note: this.state.note?.trim() || "",
       orderDetails,
     };
@@ -1104,20 +1195,20 @@ class PaymentPageClass extends React.Component {
           this.state.customerName || freshOrder?.customerName || "Khách lẻ",
         customerPhone:
           this.state.customerPhone || freshOrder?.customerPhone || "",
+        rankName: this.state.rankName || "Thành viên",
+        rankBenefit: this.state.rankBenefit || 0,
+        rankDiscountValue: this.state.rankDiscountValue || 0,
       };
 
       const PrintTemplate = (await import("@/lib/PrintTemplate")).default;
       const shop = await PrintTemplate.getShopInfo();
 
-      const printer = new (await import("@/services/PrintService")).default(
-        "lan",
-        {
-          ip: "192.168.1.107",
-          port: 9100,
-        }
-      );
+      const printer = new PrintService("lan", {
+        ip: "192.168.1.107",
+        port: 9100,
+      });
+      await printer.printOrder(order, shop).catch(console.error);
 
-      await printer.printOrder(order, shop);
       this.showToast("🖨️ Đã gửi lệnh in hóa đơn");
     } catch (e) {
       console.error("[Payment] Lỗi in:", e);
@@ -1155,8 +1246,10 @@ class PaymentPageClass extends React.Component {
   get discountSum() {
     const voucherDiscount = Number(this.state.voucherDiscount || 0);
     const manualDiscount = Number(this.state.manualDiscountValue || 0);
-    return voucherDiscount + manualDiscount;
+    const rankDiscount = Number(this.state.rankDiscountValue || 0);
+    return voucherDiscount + manualDiscount + rankDiscount;
   }
+
   get totalBefore() {
     return this.subtotal();
   }
@@ -1323,6 +1416,23 @@ class PaymentPageClass extends React.Component {
             Áp dụng
           </Button>
         </div>
+        {/* --- Bật / tắt gửi hóa đơn điện tử --- */}
+        <div className="flex items-center justify-between border rounded-lg px-3 py-2 mb-3">
+          <span className="text-sm font-medium text-gray-700">
+            Gửi hóa đơn điện tử
+          </span>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={this.state.isSendInvoice}
+              onChange={(e) =>
+                this.setState({ isSendInvoice: e.target.checked })
+              }
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00A8B0]"></div>
+          </label>
+        </div>
 
         <div className="border rounded-xl p-4 h-[300px] overflow-y-auto">
           {orders.length === 0 ? (
@@ -1369,6 +1479,24 @@ class PaymentPageClass extends React.Component {
               <span>{fmt.format(this.totalBefore)}đ</span>
             </div>
 
+            {/* 🔹 Ưu đãi hạng thành viên */}
+            {this.state.rankBenefit > 0 && (
+              <div className="border rounded-lg p-3 mb-3 bg-cyan-50">
+                <div className="flex justify-between items-center">
+                  <div className="font-semibold text-cyan-700">
+                    🎖️ Hạng: {this.state.rankName}
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    Giảm {this.state.rankBenefit * 100}%
+                  </div>
+                </div>
+                <div className="mt-1 text-sm text-cyan-800">
+                  Ưu đãi: -{fmt.format(this.state.rankDiscountValue)}đ
+                </div>
+              </div>
+            )}
+
+            {/* 🔹 Giảm theo voucher hoặc chiết khấu thủ công */}
             {(this.state.voucherDiscount > 0 ||
               this.state.manualDiscountValue > 0) && (
               <>
@@ -1378,6 +1506,7 @@ class PaymentPageClass extends React.Component {
                     <span>-{fmt.format(this.state.voucherDiscount)} VND</span>
                   </div>
                 )}
+
                 {this.state.manualDiscountValue > 0 && (
                   <div className="flex items-center justify-between text-sm text-orange-600">
                     <span>
@@ -1393,14 +1522,7 @@ class PaymentPageClass extends React.Component {
 
             <div className="flex items-center justify-between text-lg font-semibold mt-1">
               <span>Thành tiền</span>
-              <span>
-                {fmt.format(
-                  this.subtotal() -
-                    ((this.state.voucherDiscount || 0) +
-                      (this.state.manualDiscountValue || 0))
-                )}{" "}
-                VND
-              </span>
+              <span>{fmt.format(this.totalAfter)} VND</span>
             </div>
           </div>
 

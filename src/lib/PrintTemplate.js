@@ -191,8 +191,20 @@ export default class PrintTemplate {
       manualDiscountPercent > 0
         ? Math.round((subTotal * manualDiscountPercent) / 100)
         : 0;
+    const cachedRank = JSON.parse(localStorage.getItem("rankInfo") || "{}");
+    if (!order.rankName && cachedRank.rankName) {
+      order.rankName = cachedRank.rankName;
+      order.rankBenefit = cachedRank.rankBenefit;
+    }
+    // ==== Ưu đãi hạng thành viên ====
+    const rankBenefit = Number(order.rankBenefit || 0); // 0.1 = 10%
+    const rankName = order.rankName || "";
+    const rankDiscountValue =
+      rankBenefit > 0 ? Math.round(subTotal * rankBenefit) : 0;
 
-    const totalDiscount = voucherValue + manualDiscountValue;
+    // ==== Tổng giảm ====
+    const totalDiscount =
+      voucherValue + manualDiscountValue + rankDiscountValue;
     const grandTotal = subTotal - totalDiscount;
 
     out += `Tổng sản phẩm: ${itemCount}\n`;
@@ -205,6 +217,9 @@ export default class PrintTemplate {
 
     if (manualDiscountPercent > 0) {
       out += `Chiết khấu: ${manualDiscountPercent}% (-${fmt.format(manualDiscountValue)} đ)\n`;
+    }
+    if (rankBenefit > 0) {
+      out += `Ưu đãi hạng: ${rankName} (-${fmt.format(rankDiscountValue)} đ)\n`;
     }
 
     if (totalDiscount > 0) {
@@ -305,7 +320,15 @@ export default class PrintTemplate {
       manualDiscountPercent > 0
         ? Math.round((subTotal * manualDiscountPercent) / 100)
         : 0;
-    const totalDiscount = voucherValue + manualDiscountValue;
+    // ==== Ưu đãi hạng thành viên ====
+    const rankBenefit = Number(order.rankBenefit || 0);
+    const rankName = order.rankName || "";
+    const rankDiscountValue =
+      rankBenefit > 0 ? Math.round(subTotal * rankBenefit) : 0;
+
+    // ==== Tổng giảm ====
+    const totalDiscount =
+      voucherValue + manualDiscountValue + rankDiscountValue;
     const grandTotal = subTotal - totalDiscount;
 
     const qrUrl =
@@ -448,6 +471,27 @@ export default class PrintTemplate {
         ? `<tr><td>Chiết khấu:</td><td class="right">${manualDiscountPercent}% (-${fmt.format(manualDiscountValue)} đ)</td></tr>`
         : ""
     }
+    ${
+      rankBenefit >= 0
+        ? `<tr>
+        <td>Ưu đãi hạng (${rankName || "Thành viên"}):</td>
+        <td class="right">
+          ${rankBenefit > 0 ? `-${fmt.format(rankDiscountValue)} đ` : "0 đ"}
+          <span class="small">(${(rankBenefit * 100).toFixed(0)}%)</span>
+        </td>
+      </tr>`
+        : ""
+    }
+
+${
+  order.discountPercent > 0
+    ? `<tr>
+         <td>Chiết khấu (${order.discountPercent}%):</td>
+         <td class="right">-${fmt.format(order.discountValue || 0)} đ</td>
+       </tr>`
+    : ""
+}
+
     ${
       totalDiscount > 0
         ? `<tr><td>Tổng giảm:</td><td class="right">-${fmt.format(totalDiscount)} đ</td></tr>`

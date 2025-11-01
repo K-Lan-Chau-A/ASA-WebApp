@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { hubConnection } from "@/signalr/connection";
 import API_URL from "@/config/api";
+import loginArt from "../assets/img/logindraft.jpg";
 import {
   Search,
   Star,
@@ -79,6 +80,11 @@ const pickBaseUnit = (rows = []) => {
 
 class OrdersPageClass extends React.Component {
   state = {
+    showChatbox: false,
+    chatMessages: [
+      { from: "bot", text: "Xin chào 👋! Tôi có thể giúp gì cho bạn hôm nay?" },
+    ],
+    chatInput: "",
     invoices: [{ id: 1, orders: [] }],
     activeIdx: 0,
 
@@ -145,6 +151,7 @@ class OrdersPageClass extends React.Component {
 
   /* ===================== LIFECYCLE (TỐI ƯU HÓA) ===================== */
   async componentDidMount() {
+    this.loadChatCache();
     this.mounted = true;
     logApp("OrdersPage mounted");
 
@@ -226,6 +233,90 @@ class OrdersPageClass extends React.Component {
 
     await this.checkShiftStatus();
   }
+  /* ===================== CHATBOT ===================== */
+  handleChatSend = async () => {
+    const { chatInput, chatMessages } = this.state;
+    if (!chatInput.trim()) return;
+
+    const userMessage = chatInput.trim();
+    this.setState({
+      chatMessages: [...chatMessages, { from: "user", text: userMessage }],
+      chatInput: "",
+      isTyping: true,
+    });
+
+    try {
+      const token = localStorage.getItem("accessToken");
+      const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+      const shopId = profile?.shopId || 0;
+      const userId = profile?.userId || 0;
+
+      const res = await fetch(`${API_URL}/api/chat-messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userId,
+          shopId,
+          content: userMessage,
+          sender: "user",
+        }),
+      });
+
+      const data = await res.json();
+      const text =
+        data?.data?.aiMessage?.content ||
+        data?.aiResponse ||
+        "Xin lỗi, tôi chưa có phản hồi.";
+
+      setTimeout(() => {
+        this.setState((prev) => ({
+          chatMessages: [...prev.chatMessages, { from: "bot", text }],
+          isTyping: false,
+        }));
+      }, 1200);
+    } catch (e) {
+      this.setState((prev) => ({
+        chatMessages: [
+          ...prev.chatMessages,
+          {
+            from: "bot",
+            text: "⚠️ Lỗi khi kết nối máy chủ, vui lòng thử lại.",
+          },
+        ],
+        isTyping: false,
+      }));
+    }
+  };
+
+  saveChatCache = () => {
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = profile?.shopId || 0;
+    const userId = profile?.userId || 0;
+    localStorage.setItem(
+      `chat_cache_${shopId}_${userId}`,
+      JSON.stringify(this.state.chatMessages)
+    );
+  };
+
+  loadChatCache = () => {
+    const profile = JSON.parse(localStorage.getItem("userProfile") || "{}");
+    const shopId = profile?.shopId || 0;
+    const userId = profile?.userId || 0;
+    try {
+      const cache = JSON.parse(
+        localStorage.getItem(`chat_cache_${shopId}_${userId}`) || "[]"
+      );
+      if (Array.isArray(cache) && cache.length)
+        this.setState({ chatMessages: cache });
+    } catch {}
+  };
+
+  toggleChatbox = () => {
+    this.setState((prev) => ({ showChatbox: !prev.showChatbox }));
+  };
 
   componentWillUnmount() {
     this.mounted = false;
@@ -320,6 +411,15 @@ class OrdersPageClass extends React.Component {
   };
 
   componentDidUpdate(prevProps, prevState) {
+    if (
+      prevState.chatMessages.length !== this.state.chatMessages.length &&
+      this.chatContainer
+    ) {
+      this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+    }
+    if (prevState.chatMessages !== this.state.chatMessages)
+      this.saveChatCache();
+
     if (prevState.invoices !== this.state.invoices) {
       const cacheData = {
         invoices: this.state.invoices,
@@ -374,6 +474,12 @@ class OrdersPageClass extends React.Component {
       console.log("✅ Marked notification as read:", id, payload);
     } catch (e) {
       console.error("❌ Failed to mark notification as read:", e);
+    }
+    if (
+      prevState.chatMessages.length !== this.state.chatMessages.length &&
+      this.chatContainer
+    ) {
+      this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
     }
   };
 
@@ -666,7 +772,7 @@ class OrdersPageClass extends React.Component {
           unit: base ? base.unitName : "—",
           productUnitId: base ? base.productUnitId : undefined,
           unitOptions: unitRows,
-          img: p.productImageURL || "https://placehold.co/150x150",
+          img: p.productImageURL || loginArt,
         };
       });
 
@@ -754,6 +860,55 @@ class OrdersPageClass extends React.Component {
       const byShop = allItems
         .filter((p) => Number(p.shopId) === Number(this.state.shopId))
         .filter((p) => Number(p.status) === 1);
+      const promoRes = await fetch(
+        `${API_URL}/api/promotion-products?page=1&pageSize=5000`,
+        {
+          headers: {
+            accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const promoData = await this.safeParse(promoRes);
+      const promotions = Array.isArray(promoData?.items) ? promoData.items : [];
+      // 🧮 MERGE GIÁ KHUYẾN MÃI VÀO SẢN PHẨM
+      const now = new Date();
+      const merged = byShop.map((p) => {
+        const promos = promotions.filter((x) => x.productId === p.productId);
+        if (!p.productImageURL || p.productImageURL.trim() === "") {
+          p.productImageURL = loginArt;
+        }
+
+        if (promos.length === 0) return p;
+
+        const active = promos.find((pr) => {
+          const start = new Date(pr.promotionStartDate || pr.startDate);
+          const end = new Date(pr.promotionEndDate || pr.endDate);
+          return now >= start && now <= end;
+        });
+        if (!active) return p;
+
+        const basePrice = Number(p.price || 0);
+        const discountValue = Number(active.promotionValue || 0);
+        const promoType = Number(active.promotionType || 0);
+
+        const promoPrice =
+          promoType === 2
+            ? basePrice * (1 - discountValue / 100)
+            : basePrice - discountValue;
+
+        return {
+          ...p,
+          promotionPrice: promoPrice,
+          promotionType: promoType,
+          promotionName: active.promotionName,
+          hasPromo: true,
+          discountPercent:
+            promoType === 2
+              ? discountValue
+              : Math.round((discountValue / basePrice) * 100),
+        };
+      });
 
       logProd(
         "Fetched total",
@@ -762,8 +917,8 @@ class OrdersPageClass extends React.Component {
         this.state.shopId
       );
       if (this.mounted)
-        this.setState({ allProducts: byShop }, () => {
-          this.buildCategoryTabs(byShop);
+        this.setState({ allProducts: merged }, () => {
+          this.buildCategoryTabs(merged);
           this.ensureProducts("all", true);
         });
     } catch (e) {
@@ -985,6 +1140,7 @@ class OrdersPageClass extends React.Component {
       logCart("changeOrderUnit: no unitOptions on line", idx);
       return;
     }
+
     const picked = line.unitOptions.find(
       (u) => Number(u.productUnitId) === Number(productUnitId)
     );
@@ -992,15 +1148,42 @@ class OrdersPageClass extends React.Component {
       logCart("changeOrderUnit: unit not found", { idx, productUnitId });
       return;
     }
+
     logCart("changeOrderUnit", { idx, productUnitId, picked });
+
     this.setOrdersForActive((prev) => {
       const copy = [...prev];
+      const cur = copy[idx];
+
+      // 🔥 Tính lại basePrice, price và promotionValue khi đổi đơn vị
+      const newBasePrice = Number(picked.price || 0);
+      const hasPromo = cur.hasPromo || false;
+      const discountPercent = cur.discountPercent || 0;
+      const promoType = cur.promoType || 0;
+
+      let newPrice = newBasePrice;
+      let promoValue = 0;
+      if (hasPromo) {
+        if (promoType === 2) {
+          // % giảm
+          newPrice = newBasePrice * (1 - discountPercent / 100);
+          promoValue = newBasePrice - newPrice;
+        } else {
+          // giảm cố định
+          promoValue = newBasePrice * (discountPercent / 100);
+          newPrice = newBasePrice - promoValue;
+        }
+      }
+
       copy[idx] = {
-        ...copy[idx],
+        ...cur,
         productUnitId: picked.productUnitId,
         unit: picked.unitName,
-        price: picked.price,
+        basePrice: newBasePrice,
+        price: newPrice,
+        promotionValue: promoValue,
       };
+
       return copy;
     });
   };
@@ -1505,7 +1688,10 @@ class OrdersPageClass extends React.Component {
               ) : (
                 <Tabs
                   value={activeTab}
-                  onValueChange={(v) => this.setActiveTab(v)}
+                  onValueChange={(v) => {
+                    this.setActiveTab(v);
+                    this.ensureProducts(v, true);
+                  }}
                   className="flex flex-col h-full"
                 >
                   <div className="sticky top-0 z-10 bg-white -mt-[3px] rounded-t-xl overflow-hidden shadow-sm">
@@ -1618,15 +1804,11 @@ class OrdersPageClass extends React.Component {
                                 <CardContent className="p-3 flex flex-col items-center text-center h-full justify-between">
                                   {/* Hình ảnh sản phẩm */}
                                   <img
-                                    src={
-                                      p.img ||
-                                      "https://placehold.co/150x150?text=No+Image"
-                                    }
+                                    src={p.img || loginArt}
                                     alt={p.name}
                                     className="w-full h-[120px] object-contain rounded-lg mb-2"
                                     onError={(e) => {
-                                      e.currentTarget.src =
-                                        "https://placehold.co/150x150?text=No+Image";
+                                      e.currentTarget.src = loginArt;
                                     }}
                                   />
 
@@ -1635,9 +1817,23 @@ class OrdersPageClass extends React.Component {
                                     <h3 className="text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
                                       {p.name}
                                     </h3>
-                                    <div className="mt-1 text-orange-500 font-bold text-base">
-                                      {fmt.format(p.price)}đ
+                                    <div className="mt-1 text-base font-semibold text-center">
+                                      {p.hasPromo ? (
+                                        <div className="flex flex-col items-center">
+                                          <span className="text-gray-400 text-sm line-through">
+                                            {fmt.format(p.basePrice)}đ
+                                          </span>
+                                          <span className="text-orange-500 text-lg font-bold">
+                                            {fmt.format(p.price)}đ
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-orange-500 text-lg font-bold">
+                                          {fmt.format(p.price)}đ
+                                        </span>
+                                      )}
                                     </div>
+
                                     <div className="text-xs text-gray-500 mb-2">
                                       Đơn vị: {p.unit || "—"}
                                     </div>
@@ -1711,7 +1907,7 @@ class OrdersPageClass extends React.Component {
               </div>
 
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <IconBtn title="Tin nhắn" onClick={() => this.toggleChat?.()}>
+                <IconBtn title="Chat hỗ trợ" onClick={this.toggleChatbox}>
                   <MessageCircle className="w-5 h-5" />
                 </IconBtn>
 
@@ -1814,7 +2010,7 @@ class OrdersPageClass extends React.Component {
                 </div>
                 <IconBtn
                   title="Menu"
-                  onClick={() => this.props.navigate("/products")}
+                  onClick={() => this.props.navigate("/dashboard")}
                 >
                   <Menu className="w-6 h-6" />
                 </IconBtn>
@@ -2111,7 +2307,7 @@ class OrdersPageClass extends React.Component {
                 {/* Số điện thoại */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">
-                    Số điện thoại <span className="text-red-500">*</span>
+                    Số điện thoại <span className="text-red-500"> *</span>
                   </label>
                   <Input
                     placeholder="0901234567"
@@ -2131,7 +2327,7 @@ class OrdersPageClass extends React.Component {
                 {/* Email */}
                 <div>
                   <label className="block text-sm font-medium text-gray-600 mb-1">
-                    Email
+                    Email <span className="text-red-500">*</span>
                   </label>
                   <Input
                     type="email"
@@ -2234,6 +2430,105 @@ class OrdersPageClass extends React.Component {
                   )}
                 </Button>
               </div>
+            </div>
+          </div>
+        )}
+        {/* CHATBOX NỔI */}
+        {this.state.showChatbox && (
+          <div className="fixed bottom-20 right-6 w-[340px] h-[480px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col z-[999] overflow-hidden animate-in fade-in-0 zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="px-4 py-3 border-b bg-gradient-to-r from-[#00A8B0] to-[#00929A] text-white font-semibold flex justify-between items-center">
+              <span>🦄 Pony AI Assistant</span>
+              <button
+                onClick={this.toggleChatbox}
+                className="hover:opacity-80 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Nội dung chat (cuộn được mượt) */}
+            <div
+              ref={(el) => (this.chatContainer = el)}
+              className="flex-1 overflow-y-auto px-3 py-3 bg-[#F8FAFB] space-y-3 scroll-smooth custom-scrollbar"
+              style={{ scrollbarWidth: "thin" }}
+            >
+              {this.state.chatMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.from === "user" ? "justify-end" : "justify-start"} items-end`}
+                >
+                  {msg.from !== "user" && (
+                    <div className="flex flex-col items-center mr-2">
+                      <div className="w-8 h-8 bg-[#00A8B0] text-white rounded-full flex items-center justify-center shadow text-base">
+                        🦄
+                      </div>
+                      <span className="text-[10px] text-gray-500 mt-0.5">
+                        Pony
+                      </span>
+                    </div>
+                  )}
+
+                  <div
+                    className={`px-3 py-2 rounded-2xl text-sm max-w-[70%] whitespace-pre-line leading-relaxed shadow-sm transition-all ${
+                      msg.from === "user"
+                        ? "bg-[#00A8B0] text-white rounded-br-sm"
+                        : "bg-white text-gray-800 rounded-bl-sm border border-gray-100"
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+
+                  {msg.from === "user" && (
+                    <div className="flex flex-col items-center ml-2">
+                      <div className="w-8 h-8 bg-gray-200 text-gray-700 rounded-full flex items-center justify-center shadow text-base">
+                        👤
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Hiệu ứng Pony đang gõ */}
+              {this.state.isTyping && (
+                <div className="flex items-center space-x-2 text-gray-500 text-sm mt-1">
+                  <div className="w-8 h-8 bg-[#00A8B0] text-white rounded-full flex items-center justify-center">
+                    🦄
+                  </div>
+                  <div className="flex space-x-1 ml-1">
+                    <span
+                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "0s" }}
+                    ></span>
+                    <span
+                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "0.2s" }}
+                    ></span>
+                    <span
+                      className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                      style={{ animationDelay: "0.4s" }}
+                    ></span>
+                  </div>
+                  <span className="italic text-xs">Pony đang suy nghĩ...</span>
+                </div>
+              )}
+            </div>
+
+            {/* Thanh nhập */}
+            <div className="p-3 border-t bg-white flex items-center gap-2">
+              <Input
+                placeholder="Nhập tin nhắn..."
+                value={this.state.chatInput}
+                onChange={(e) => this.setState({ chatInput: e.target.value })}
+                onKeyDown={(e) => e.key === "Enter" && this.handleChatSend()}
+                className="flex-1 rounded-xl text-sm"
+              />
+              <Button
+                className="bg-[#00A8B0] hover:bg-[#00939a] text-white rounded-xl text-sm"
+                onClick={this.handleChatSend}
+              >
+                Gửi
+              </Button>
             </div>
           </div>
         )}
