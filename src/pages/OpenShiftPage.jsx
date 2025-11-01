@@ -140,7 +140,6 @@ export default function OpenShiftPage() {
         null;
 
       persistShiftId(shiftId);
-      alert(`✅ Mở ca thành công! ShiftId = ${shiftId}`);
       navigate("/orders");
     } catch (e) {
       console.error("[OpenShift] Lỗi mở ca:", e);

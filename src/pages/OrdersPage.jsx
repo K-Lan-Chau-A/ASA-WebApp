@@ -1987,16 +1987,6 @@ class OrdersPageClass extends React.Component {
                           })
                         )}
                       </div>
-
-                      {/* Footer */}
-                      <div className="px-4 py-2 text-center bg-gray-50 rounded-b-xl">
-                        <button
-                          className="text-xs text-[#00A8B0] hover:underline"
-                          onClick={() => alert("Hiện trang tất cả thông báo!")}
-                        >
-                          Xem tất cả
-                        </button>
-                      </div>
                     </div>
                   )}
                 </div>

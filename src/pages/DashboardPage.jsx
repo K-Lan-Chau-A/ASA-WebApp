@@ -417,8 +417,6 @@ class DashboardPage extends React.Component {
         return;
       }
 
-      alert("✅ Ca đã được đóng thành công!");
-
       // 🧾 2️⃣ Gọi API lấy báo cáo chốt ca
       const reportRes = await fetch(
         `${API_URL}/api/reports/shift-close-report?shiftId=${shiftId}`,
