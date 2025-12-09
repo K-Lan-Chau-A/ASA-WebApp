@@ -145,20 +145,21 @@ class CustomerPageClass extends React.Component {
   // 👇 LẤY RANK TỪ API
   fetchRanks = async () => {
     const { shopId } = this.state;
-    if (!shopId) return;
-    try {
-      const res = await fetch(
-        `${API_URL}/api/ranks?ShopId=${shopId}&page=1&pageSize=100`,
-        { headers: { accept: "application/json" } }
-      );
-      const data = await this.safeParse(res);
-      if (res.ok) {
-        // items: [{ rankId, rankName, benefit, threshold, shopId }]
-        this.setState({ ranks: Array.isArray(data.items) ? data.items : [] });
+    const token = localStorage.getItem("accessToken");
+    if (!shopId || !token) return;
+
+    const res = await fetch(
+      `${API_URL}/api/ranks?ShopId=${shopId}&page=1&pageSize=100`,
+      {
+        headers: {
+          accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
       }
-    } catch (e) {
-      console.log("Fetch ranks error:", e);
-    }
+    );
+
+    const data = await this.safeParse(res);
+    if (res.ok) this.setState({ ranks: data.items || [] });
   };
 
   /* ---------- CRUD ---------- */
@@ -389,10 +390,9 @@ class CustomerPageClass extends React.Component {
                   rank = this.resolveRankBySpent(cus.spent || cus.totalSpent);
                 }
 
-                // nếu vẫn không có → fallback Đồng
                 const displayRank = rank || {
                   rankId: 1,
-                  rankName: "Đồng",
+                  rankName: "Chưa xếp hạng",
                   color: "bg-[#CD7F32]",
                 };
 

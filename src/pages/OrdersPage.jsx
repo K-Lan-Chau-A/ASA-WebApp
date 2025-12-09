@@ -753,6 +753,9 @@ class OrdersPageClass extends React.Component {
         const basePrice = Number(base?.price ?? p.price ?? 0);
         const promoPrice = Number(p.promotionPrice ?? 0);
         const promoType = Number(p.promotionType ?? 0);
+        const quantity = Number(p.quantity ?? 0);
+        const isLow = Number(p.isLow ?? 0);
+        const outOfStock = quantity <= 0;
 
         const hasPromo = promoPrice > 0 && promoPrice < basePrice;
         const discountPercent =
@@ -773,6 +776,7 @@ class OrdersPageClass extends React.Component {
           productUnitId: base ? base.productUnitId : undefined,
           unitOptions: unitRows,
           img: p.productImageURL || loginArt,
+          outOfStock,
         };
       });
 
@@ -1635,18 +1639,7 @@ class OrdersPageClass extends React.Component {
     const total = orders.reduce((s, it) => s + it.price * it.qty, 0);
 
     return (
-      <div 
-        className="h-screen w-full bg-[#012E40] border-4 border-[#012E40] p-0 m-0"
-        style={{ 
-          position: 'fixed', 
-          top: 0, 
-          left: 0, 
-          right: 0, 
-          bottom: 0,
-          margin: 0,
-          padding: 0 
-        }}
-      >
+      <div className="h-screen w-full bg-[#012E40] border-[4px] border-[#012E40]xl p-3">
         {/* Cảnh báo trạng thái ca làm việc */}
         {this.state.shiftStatus === 2 && (
           <div className="bg-red-100 text-red-700 text-center py-2 font-medium rounded-md mb-3">
@@ -1654,7 +1647,7 @@ class OrdersPageClass extends React.Component {
             hàng.
           </div>
         )}
-        <div className="flex gap-0 bg-[#012E40] h-full">
+        <div className="flex gap-[5px] bg-[#012E40] h-full">
           {/* LEFT */}
           <div className="w-1/2 flex flex-col min-h-0 ">
             <div className="flex items-center justify-between px-4 py-3 mb-2">
@@ -1792,15 +1785,27 @@ class OrdersPageClass extends React.Component {
                             list.map((p) => (
                               <Card
                                 key={p.id}
-                                className="relative rounded-xl hover:shadow-md transition"
+                                className={`relative rounded-xl transition ${
+                                  p.outOfStock
+                                    ? "opacity-60 pointer-events-none"
+                                    : "hover:shadow-md"
+                                }`}
                               >
-                                {/* ⭐ Góc trái: nếu là top product */}
+                                {/* ⭐ Bán chạy */}
                                 {this.state.topProductIds?.includes(
                                   Number(p.id)
                                 ) && (
                                   <div className="absolute top-2 left-2 bg-yellow-400 text-white text-[11px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-1">
                                     <Star size={12} fill="currentColor" /> Bán
                                     chạy
+                                  </div>
+                                )}
+
+                                {/* 🔻 Hết hàng overlay */}
+                                {p.outOfStock && (
+                                  <div className="absolute inset-0 bg-black/50 rounded-xl flex flex-col items-center justify-center text-white text-sm font-semibold z-10">
+                                    <AlertCircle className="w-5 h-5 mb-1 text-yellow-400" />
+                                    Hết hàng
                                   </div>
                                 )}
 
@@ -1812,22 +1817,22 @@ class OrdersPageClass extends React.Component {
                                       -{p.discountPercent}%
                                     </div>
                                   )}
+
                                 <CardContent className="p-3 flex flex-col items-center text-center h-full justify-between">
-                                  {/* Hình ảnh sản phẩm */}
                                   <img
                                     src={p.img || loginArt}
                                     alt={p.name}
                                     className="w-full h-[120px] object-contain rounded-lg mb-2"
-                                    onError={(e) => {
-                                      e.currentTarget.src = loginArt;
-                                    }}
+                                    onError={(e) =>
+                                      (e.currentTarget.src = loginArt)
+                                    }
                                   />
 
-                                  {/* Tên và giá */}
                                   <div className="flex flex-col items-center justify-between flex-1 w-full">
                                     <h3 className="text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
                                       {p.name}
                                     </h3>
+
                                     <div className="mt-1 text-base font-semibold text-center">
                                       {p.hasPromo ? (
                                         <div className="flex flex-col items-center">
@@ -1846,18 +1851,37 @@ class OrdersPageClass extends React.Component {
                                     </div>
 
                                     <div className="text-xs text-gray-500 mb-2">
-                                      Đơn vị: {p.unit || "—"}
+                                      {p.outOfStock ? (
+                                        <span className="text-red-500 font-semibold">
+                                          Hết hàng
+                                        </span>
+                                      ) : (
+                                        <>
+                                          Kho:{" "}
+                                          <span className="font-medium text-gray-700">
+                                            {p.quantity}
+                                          </span>{" "}
+                                          <span className="text-gray-500">
+                                            | {p.unit}
+                                          </span>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
 
-                                  {/* Đánh giá & nút thêm */}
                                   <div className="flex justify-center w-full mt-2">
                                     <Button
                                       size="sm"
-                                      className="rounded-full bg-[#00A8B0] hover:bg-[#00939a] text-white px-4 py-1 text-xs"
-                                      onClick={() => this.addToOrder(p)}
+                                      className={`rounded-full px-4 py-1 text-xs ${
+                                        p.outOfStock
+                                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                          : "bg-[#00A8B0] hover:bg-[#00939a] text-white"
+                                      }`}
+                                      onClick={() =>
+                                        !p.outOfStock && this.addToOrder(p)
+                                      }
                                     >
-                                      + Thêm
+                                      {p.outOfStock ? "Hết hàng" : "+ Thêm"}
                                     </Button>
                                   </div>
                                 </CardContent>
@@ -2023,7 +2047,7 @@ class OrdersPageClass extends React.Component {
 
             <div className="flex-1 flex flex-col bg-white rounded-xl overflow-hidden">
               {/* === THANH KHÁCH HÀNG FULL WIDTH === */}
-              <div className="flex items-center gap-3 w-full px-6 py-0.5 bg-white">
+              <div className="flex items-center gap-3 w-full px-6 py-2 bg-white">
                 {/* Icon KH */}
                 <div className="w-8 h-8 rounded-md bg-[#EAF7F8] grid place-items-center text-[#0c5e64] text-[10px] font-bold">
                   KH

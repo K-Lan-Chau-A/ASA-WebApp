@@ -141,7 +141,6 @@ class DashboardPage extends React.Component {
       this.setState({ shiftId, shiftStatus: status });
 
       if (status === 1) {
-        await this.loadShiftOrders(shopId, shiftId, token);
         localStorage.setItem(
           "currentShift",
           JSON.stringify({
@@ -221,7 +220,9 @@ class DashboardPage extends React.Component {
       }
 
       this.setState({
-        topProducts,
+        todayInvoices: totalInvoices,
+        todayRevenue: totalRevenue,
+        totalProfit,
       });
 
       console.log(

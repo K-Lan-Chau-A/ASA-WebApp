@@ -14,7 +14,6 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  /* 🔹 Chuẩn hóa dữ liệu từ API Login */
   const normalizeLoginData = (raw) => {
     const root = raw?.data && typeof raw.data === "object" ? raw.data : raw;
 

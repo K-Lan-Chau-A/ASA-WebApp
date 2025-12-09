@@ -295,30 +295,38 @@ export default class InvoicesPage extends React.Component {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const json = await this.safeParse(res);
-      const items = Array.isArray(json?.items)
+
+      const rawItems = Array.isArray(json?.items)
         ? json.items
         : Array.isArray(json?.data?.items)
           ? json.data.items
-          : [];
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json)
+              ? json
+              : [];
 
-      return items.map((d) => {
-        const name =
+      // ✅ Lọc trùng dựa vào orderDetailId hoặc productId+unitId
+      const seen = new Set();
+      const items = rawItems.filter((d) => {
+        const key = d.orderDetailId || `${d.productId}_${d.unitId || ""}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      return items.map((d) => ({
+        ...d,
+        productName:
           d.productName?.trim() ||
           this.productMap?.[d.productId] ||
-          `Sản phẩm #${d.productId}`;
-
-        const unitName =
+          `Sản phẩm #${d.productId}`,
+        unitName:
           d.unitName ||
           this.unitByProductUnitId?.[d.productUnitId] ||
           this.unitByUnitId?.[d.unitId] ||
-          "-";
-
-        return {
-          ...d,
-          productName: name,
-          unitName,
-        };
-      });
+          "-",
+      }));
     } catch (e) {
       console.warn("⚠️ fetchOrderDetail:", e.message);
       return [];
@@ -371,6 +379,7 @@ export default class InvoicesPage extends React.Component {
 
   /* ---------- View Detail ---------- */
   handleView = async (order) => {
+    this.setState({ orderItems: [], selectedOrder: order });
     const items = await this.fetchOrderDetail(order.id);
     this.setState({
       selectedOrder: order,

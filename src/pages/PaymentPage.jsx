@@ -324,27 +324,54 @@ class PaymentPageClass extends React.Component {
   }
 
   getAuthContext() {
-    let profile = null;
     try {
-      profile =
-        JSON.parse(localStorage.getItem("userProfile") || "null") ||
-        JSON.parse(localStorage.getItem("auth") || "null")?.profile ||
-        null;
-    } catch {}
-    const shopId = Number(profile?.shopId || 0) || null;
+      const authRaw = localStorage.getItem("auth");
+      const profileRaw = localStorage.getItem("userProfile");
+      const shiftRaw = localStorage.getItem("currentShift");
 
-    let shiftId = null;
-    try {
-      const auth = JSON.parse(localStorage.getItem("auth") || "null");
-      if (auth?.currentShift?.shiftId != null)
-        shiftId = Number(auth.currentShift.shiftId);
-      if (!shiftId && auth?.shiftId != null) shiftId = Number(auth.shiftId);
-    } catch {}
-    if (!shiftId) {
-      const cur = JSON.parse(localStorage.getItem("currentShift") || "null");
-      if (cur?.shiftId != null) shiftId = Number(cur.shiftId);
+      const auth = authRaw ? JSON.parse(authRaw) : {};
+      const profile = profileRaw ? JSON.parse(profileRaw) : {};
+      const currentShift = shiftRaw ? JSON.parse(shiftRaw) : {};
+
+      const shopId =
+        Number(profile?.shopId || auth?.shopId || auth?.profile?.shopId || 0) ||
+        0;
+
+      // ✅ Lấy shiftId từ currentShift nếu status = "open"
+      let shiftId = 0;
+      if (currentShift?.status?.toLowerCase() === "open") {
+        shiftId = Number(currentShift.shiftId || 0);
+      } else {
+        console.warn(
+          "[Payment] ❌ Ca làm việc chưa mở hoặc đã đóng:",
+          currentShift
+        );
+        toast({
+          title: "⚠️ Không có ca làm việc đang mở",
+          description: "Vui lòng mở ca trước khi tạo đơn hàng.",
+          duration: 3000,
+        });
+        return { shopId, shiftId: 0 };
+      }
+
+      if (!shopId || !shiftId) {
+        console.warn(
+          "[Payment] ⚠️ Không tìm thấy shopId hoặc shiftId hợp lệ:",
+          {
+            shopId,
+            shiftId,
+            auth,
+            profile,
+            currentShift,
+          }
+        );
+      }
+
+      return { shopId, shiftId };
+    } catch (e) {
+      console.error("[Payment] ❌ Lỗi đọc AuthContext:", e);
+      return { shopId: 0, shiftId: 0 };
     }
-    return { shopId, shiftId };
   }
 
   async waitForOrderId(timeoutMs = 3000) {
@@ -388,8 +415,17 @@ class PaymentPageClass extends React.Component {
       const payload = this.buildPayload();
 
       payload.status = 0;
-      localStorage.removeItem("lastOrderResponse");
-      localStorage.removeItem("lastOrderCache");
+
+      [
+        "lastOrderResponse",
+        "lastOrderCache",
+        "lastPayment",
+        "lastOrder",
+      ].forEach((k) => localStorage.removeItem(k));
+
+      try {
+        localStorage.setItem("activeOrderId", "0");
+      } catch {}
 
       const res = await fetch(`${API_URL}/api/orders`, {
         method: "POST",
@@ -414,6 +450,7 @@ class PaymentPageClass extends React.Component {
         0;
 
       if (newId > 0) {
+        localStorage.setItem("activeOrderId", String(newId));
         this.setState({ orderId: newId, displayOrderId: newId });
         console.log(`✅ Đã tạo đơn hàng #${newId}`);
         return newId;
@@ -1072,7 +1109,7 @@ class PaymentPageClass extends React.Component {
 
         log(`💰 [CASH] PUT status=1 → OK`, url, data);
         this._isPaid = true;
-
+        await new Promise((r) => setTimeout(r, 500));
         await this.handlePrintReceipt();
         this.showToast("✅ Thanh toán thành công!");
         setTimeout(() => this.props.navigate("/orders"), 800);
@@ -1134,10 +1171,15 @@ class PaymentPageClass extends React.Component {
   async handlePrintReceipt() {
     try {
       const orderId = this.state.displayOrderId || this.state.orderId;
-      const freshOrder = await this.fetchOrderHead(orderId);
-      const subTotal = this.totalBefore;
+      const subTotal = this.subtotal();
       const discountSum = this.discountSum;
       const totalAfter = this.totalAfter;
+
+      const freshOrder = {
+        customerId: this.state.customerId,
+        customerName: this.state.customerName,
+        note: this.state.note,
+      };
 
       const items = (this.state.orders || []).map((o) => ({
         name: o.name,
@@ -1316,7 +1358,7 @@ class PaymentPageClass extends React.Component {
       this.state.displayOrderId || this.state.orderId || null;
 
     return (
-      <div className="flex-1 bg-white rounded-xl p-4 mr-3">
+      <div className="flex-1 bg-white rounded-xl p-4 mr-3 overflow-y-auto max-h-[calc(100vh-100px)] scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
         <div className="mb-3">
           <div className="text-xs text-gray-500">Thông tin Khách hàng</div>
           <div className="text-lg font-semibold">
